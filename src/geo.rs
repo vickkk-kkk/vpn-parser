@@ -487,13 +487,7 @@ fn human_mb(bytes: u64) -> String {
 /// `LAN` 是各家订阅的常见写法，但 Loyalsoldier 的 geosite/geoip 库里
 /// 都没有这个类别（对应类别叫 `private`），直传会让内核拒启
 /// （shoes：`DAT category "LAN" not found`）。映射后语义不变：局域网/私有地址直连。
-pub fn normalize_geo_code(code: &str) -> &str {
-    if code.eq_ignore_ascii_case("lan") {
-        "private"
-    } else {
-        code
-    }
-}
+pub use vp_client_core::geo::normalize_geo_code;
 
 /// dat 文件（protobuf）里是否存在指定类别码（大小写不敏感，与内核判定一致）。
 ///
@@ -506,48 +500,37 @@ pub fn normalize_geo_code(code: &str) -> &str {
 /// 文件读不出 / 结构解析不了时返回 true —— 解析是尽力而为，裁决权交还内核，
 /// 让它报出真实的错误。
 pub fn dat_has_category(path: &Path, code: &str) -> bool {
-    let Ok(data) = std::fs::read(path) else {
-        return true;
-    };
-    let code = code.as_bytes();
-    let mut pos = 0usize;
-    while pos < data.len() {
-        // 顶层是重复的 Category 消息（field 1, length-delimited）；
-        // 出现别的 tag 说明结构对不上，交给内核裁决。
-        if data[pos] != 0x0a {
-            return true;
+    match std::fs::read(path) {
+        Ok(data) => vp_client_core::geo::dat_category_lookup(&data, code).allows_legacy(),
+        Err(_) => true,
+    }
+}
+
+/// Filesystem-backed adapter; preserves the existing kernel-directory search order.
+/// It never downloads/provisions data and exposes missing/read failures to callers.
+pub struct DesktopGeoProvider;
+
+impl vp_client_core::geo::GeoProvider for DesktopGeoProvider {
+    fn lookup(&self, kind: vp_client_core::geo::GeoKind, code: &str)
+        -> vp_client_core::geo::CategoryLookup
+    {
+        use vp_client_core::geo::{CategoryLookup, GeoKind, GeoUnavailable};
+        let normalized = normalize_geo_code(code);
+        if kind == GeoKind::Ip
+            && normalized.len() == 2
+            && normalized.chars().all(|c| c.is_ascii_alphabetic())
+        {
+            return CategoryLookup::Present;
         }
-        pos += 1;
-        let mut length = 0usize;
-        let mut shift = 0u32;
-        loop {
-            let Some(&b) = data.get(pos) else { return true };
-            pos += 1;
-            length |= ((b & 0x7f) as usize) << shift;
-            if b & 0x80 == 0 {
-                break;
-            }
-            shift += 7;
-            if shift > 28 {
-                return true;
-            }
-        }
-        let Some(chunk) = data.get(pos..pos + length) else {
-            return true;
+        let name = match kind { GeoKind::Site => "geosite.dat", GeoKind::Ip => "geoip.dat" };
+        let Some(path) = find_geo_dat_file(name) else {
+            return CategoryLookup::Unavailable(GeoUnavailable::Missing);
         };
-        pos += length;
-        // Category 内部 field 1（0x0a）是类别码字符串
-        if chunk.first() == Some(&0x0a) {
-            if let Some(&code_len) = chunk.get(1) {
-                if let Some(found) = chunk.get(2..2 + code_len as usize) {
-                    if found.eq_ignore_ascii_case(code) {
-                        return true;
-                    }
-                }
-            }
+        match std::fs::read(path) {
+            Ok(data) => vp_client_core::geo::dat_category_lookup(&data, normalized),
+            Err(_) => CategoryLookup::Unavailable(GeoUnavailable::Unreadable),
         }
     }
-    false
 }
 
 /// 查找本地存在的 geo 数据文件路径（支持大小写兼容与各内核目录查找）
@@ -583,25 +566,14 @@ pub fn find_geo_dat_file(name: &str) -> Option<PathBuf> {
 
 /// 检查 geosite.dat 中是否包含该类别；若本地暂无该库文件则默认放行（true），交由内核处理
 pub fn has_geosite_category(code: &str) -> bool {
-    let normalized = normalize_geo_code(code);
-    if let Some(p) = find_geo_dat_file("geosite.dat") {
-        dat_has_category(&p, normalized)
-    } else {
-        true
-    }
+    use vp_client_core::geo::{GeoKind, GeoProvider};
+    DesktopGeoProvider.lookup(GeoKind::Site, code).allows_legacy()
 }
 
-/// 检查 geoip.dat 中是否包含该国家码/类别（2字母ISO代码及常规国家码直接放行，自定义分类如 telegram/private 做 dat 检索）
+/// Preserve the upstream two-letter GEOIP bypass and defer-to-engine policy.
 pub fn has_geoip_category(code: &str) -> bool {
-    let normalized = normalize_geo_code(code);
-    if normalized.len() == 2 && normalized.chars().all(|c| c.is_ascii_alphabetic()) {
-        return true;
-    }
-    if let Some(p) = find_geo_dat_file("geoip.dat") {
-        dat_has_category(&p, normalized)
-    } else {
-        true
-    }
+    use vp_client_core::geo::{GeoKind, GeoProvider};
+    DesktopGeoProvider.lookup(GeoKind::Ip, code).allows_legacy()
 }
 
 fn host_of(url: &str) -> String {

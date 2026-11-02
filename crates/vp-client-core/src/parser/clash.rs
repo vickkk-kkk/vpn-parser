@@ -1,9 +1,13 @@
-﻿use super::make_node;
+use super::make_node;
 use crate::models::Node;
 use serde_json::{json, Value};
 
 /// Parse Clash / Clash Meta YAML subscription into nodes.
-pub fn parse_clash_yaml(content: &str, source_id: Option<&str>) -> anyhow::Result<Vec<Node>> {
+pub fn parse_clash_yaml(
+    content: &str,
+    source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
+) -> anyhow::Result<Vec<Node>> {
     let root: Value = serde_yaml::from_str(content)?;
     let proxies = root
         .get("proxies")
@@ -21,7 +25,7 @@ pub fn parse_clash_yaml(content: &str, source_id: Option<&str>) -> anyhow::Resul
     let mut nodes = Vec::new();
     if let Some(arr) = proxies.as_array() {
         for item in arr {
-            if let Some(node) = proxy_to_node(item, source_id) {
+            if let Some(node) = proxy_to_node(item, source_id, metadata) {
                 nodes.push(node);
             }
         }
@@ -30,7 +34,11 @@ pub fn parse_clash_yaml(content: &str, source_id: Option<&str>) -> anyhow::Resul
 }
 
 /// 从 Clash YAML 订阅文本中提取自带的分流规则（rules: 字段）。
-pub fn extract_clash_rules(content: &str) -> Vec<crate::proxy::TrafficRule> {
+pub fn extract_clash_rules(
+    content: &str,
+    geo: &impl crate::geo::GeoProvider,
+    diagnostics: &mut Vec<super::RuleDiagnostic>,
+) -> Vec<crate::config::TrafficRule> {
     let Ok(root) = serde_yaml::from_str::<Value>(content) else {
         return Vec::new();
     };
@@ -38,67 +46,79 @@ pub fn extract_clash_rules(content: &str) -> Vec<crate::proxy::TrafficRule> {
         return Vec::new();
     };
     let mut rules = Vec::with_capacity(rules_val.len());
-    for item in rules_val {
+    for (rule_index, item) in rules_val.iter().enumerate() {
         let Some(line) = item.as_str() else {
             continue;
         };
-        if let Some(mut rule) = crate::proxy::rule_io::parse_single_rule(line) {
+        if let Some(mut rule) = crate::rule_io::parse_single_rule(line) {
             let keep = match &mut rule.matcher {
-                crate::proxy::RuleMatcher::GeoSite(ref mut s) => {
+                crate::config::RuleMatcher::GeoSite(ref mut s) => {
                     let norm = crate::geo::normalize_geo_code(s).to_string();
-                    if !crate::geo::has_geosite_category(&norm) {
-                        tracing::warn!(category = %s, "订阅规则中含有本地不存在的 GEOSITE 分类，入口已自动清洗跳过");
+                    if !super::keep_geo(
+                        geo,
+                        crate::geo::GeoKind::Site,
+                        &norm,
+                        rule_index,
+                        diagnostics,
+                    ) {
                         false
                     } else {
                         *s = norm;
                         true
                     }
                 }
-                crate::proxy::RuleMatcher::GeoIp(ref mut c) => {
+                crate::config::RuleMatcher::GeoIp(ref mut c) => {
                     let norm = crate::geo::normalize_geo_code(c).to_string();
-                    if !crate::geo::has_geoip_category(&norm) {
-                        tracing::warn!(country = %c, "订阅规则中含有本地不存在的 GEOIP 分类，入口已自动清洗跳过");
+                    if !super::keep_geo(
+                        geo,
+                        crate::geo::GeoKind::Ip,
+                        &norm,
+                        rule_index,
+                        diagnostics,
+                    ) {
                         false
                     } else {
                         *c = norm;
                         true
                     }
                 }
-                crate::proxy::RuleMatcher::RuleSet(ref tag) => {
+                crate::config::RuleMatcher::RuleSet(ref tag) => {
                     let lower = tag.to_ascii_lowercase();
                     match lower.as_str() {
                         "reject" | "reject-list" | "ad" | "ads" | "advertising" => {
-                            rule.matcher = crate::proxy::RuleMatcher::GeoSite("category-ads-all".into());
+                            rule.matcher =
+                                crate::config::RuleMatcher::GeoSite("category-ads-all".into());
                             true
                         }
                         "direct" | "direct-list" | "cn" | "china" => {
-                            rule.matcher = crate::proxy::RuleMatcher::GeoSite("cn".into());
+                            rule.matcher = crate::config::RuleMatcher::GeoSite("cn".into());
                             true
                         }
                         "proxy" | "proxy-list" => {
-                            rule.matcher = crate::proxy::RuleMatcher::GeoSite("geolocation-!cn".into());
+                            rule.matcher =
+                                crate::config::RuleMatcher::GeoSite("geolocation-!cn".into());
                             true
                         }
                         "gfw" | "gfwlist" => {
-                            rule.matcher = crate::proxy::RuleMatcher::GeoSite("gfw".into());
+                            rule.matcher = crate::config::RuleMatcher::GeoSite("gfw".into());
                             true
                         }
                         "cncidr" => {
-                            rule.matcher = crate::proxy::RuleMatcher::GeoIp("CN".into());
+                            rule.matcher = crate::config::RuleMatcher::GeoIp("CN".into());
                             true
                         }
                         "telegramcidr" => {
-                            rule.matcher = crate::proxy::RuleMatcher::GeoIp("telegram".into());
+                            rule.matcher = crate::config::RuleMatcher::GeoIp("telegram".into());
                             true
                         }
                         "lancidr" | "private" => {
-                            rule.matcher = crate::proxy::RuleMatcher::GeoSite("private".into());
+                            rule.matcher = crate::config::RuleMatcher::GeoSite("private".into());
                             true
                         }
                         "google" | "youtube" | "telegram" | "netflix" | "openai" | "chatgpt"
                         | "microsoft" | "github" | "twitter" | "facebook" | "apple"
                         | "speedtest" | "steam" => {
-                            rule.matcher = crate::proxy::RuleMatcher::GeoSite(lower);
+                            rule.matcher = crate::config::RuleMatcher::GeoSite(lower);
                             true
                         }
                         _ => {
@@ -114,30 +134,46 @@ pub fn extract_clash_rules(content: &str) -> Vec<crate::proxy::TrafficRule> {
             }
         }
     }
-    crate::proxy::optimize_traffic_rules(&rules)
+    crate::config::optimize_traffic_rules(&rules)
 }
 
 /// 从 Clash YAML 中提取原生分流规则的 YAML 文本（rules: [...] 块），并在入口处进行分类安全清洗与规范化。
-pub fn extract_clash_rules_yaml(content: &str) -> Option<String> {
+pub fn extract_clash_rules_yaml(
+    content: &str,
+    geo: &impl crate::geo::GeoProvider,
+    diagnostics: &mut Vec<super::RuleDiagnostic>,
+) -> Option<String> {
     let root = serde_yaml::from_str::<serde_yaml::Value>(content).ok()?;
     let rules = root.get("rules")?;
     if let Some(arr) = rules.as_sequence() {
         if !arr.is_empty() {
             let mut cleaned = Vec::with_capacity(arr.len());
-            for item in arr {
+            for (rule_index, item) in arr.iter().enumerate() {
                 if let Some(line) = item.as_str() {
                     let parts: Vec<&str> = line.split(',').map(str::trim).collect();
                     if parts.len() >= 2 {
                         let ty = parts[0].to_ascii_uppercase();
                         let payload = parts[1];
-                        if ty == "GEOSITE" && !crate::geo::has_geosite_category(payload) {
-                            tracing::warn!(category = %payload, "订阅 rules_yaml 含有本地不存在的 GEOSITE 分类，入口已自动清洗跳过");
+                        if ty == "GEOSITE"
+                            && !super::keep_geo(
+                                geo,
+                                crate::geo::GeoKind::Site,
+                                payload,
+                                rule_index,
+                                diagnostics,
+                            )
+                        {
                             continue;
                         }
                         if ty == "GEOIP" {
                             let norm = crate::geo::normalize_geo_code(payload);
-                            if !crate::geo::has_geoip_category(norm) {
-                                tracing::warn!(country = %payload, "订阅 rules_yaml 含有本地不存在的 GEOIP 分类，入口已自动清洗跳过");
+                            if !super::keep_geo(
+                                geo,
+                                crate::geo::GeoKind::Ip,
+                                norm,
+                                rule_index,
+                                diagnostics,
+                            ) {
                                 continue;
                             }
                             if norm != payload {
@@ -162,7 +198,9 @@ pub fn extract_clash_rules_yaml(content: &str) -> Option<String> {
 /// 从 Clash YAML 中提取原生策略组的 YAML 文本（proxy-groups: [...] 块）
 pub fn extract_clash_groups_yaml(content: &str) -> Option<String> {
     let root = serde_yaml::from_str::<serde_yaml::Value>(content).ok()?;
-    let groups = root.get("proxy-groups").or_else(|| root.get("Proxy Group"))?;
+    let groups = root
+        .get("proxy-groups")
+        .or_else(|| root.get("Proxy Group"))?;
     if let Some(arr) = groups.as_sequence() {
         if !arr.is_empty() {
             return serde_yaml::to_string(groups).ok();
@@ -171,7 +209,11 @@ pub fn extract_clash_groups_yaml(content: &str) -> Option<String> {
     None
 }
 
-fn proxy_to_node(item: &Value, source_id: Option<&str>) -> Option<Node> {
+fn proxy_to_node(
+    item: &Value,
+    source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
+) -> Option<Node> {
     let obj = item.as_object()?;
     let ty = obj
         .get("type")
@@ -236,14 +278,15 @@ fn proxy_to_node(item: &Value, source_id: Option<&str>) -> Option<Node> {
 
     let raw = serde_yaml::to_string(item).unwrap_or_else(|_| item.to_string());
     Some(make_node(
-        protocol, &name, &server, port, &raw, config, source_id,
+        protocol, &name, &server, port, &raw, config, source_id, metadata,
     ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proxy::{RuleAction, RuleMatcher};
+    use crate::config::{RuleAction, RuleMatcher};
+    use crate::parser::test_support::{extract_clash_rules, extract_clash_rules_yaml};
 
     #[test]
     fn extracts_clash_rules_successfully() {

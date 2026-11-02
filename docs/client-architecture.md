@@ -20,16 +20,16 @@ A native shell is not a working VPN implementation. Android requires a real VpnS
 The root workspace contains:
 
 - `vpn-parser`: the existing desktop binary.
-- `crates/vp-client-core`: shared configuration, node DTOs and pure parsing helpers.
+- `crates/vp-client-core`: shared configuration, node DTOs, subscription/protocol parsers and explicit-provider geo/rule parsing.
 - `crates/vp-client-mobile-ui`: shared egui mobile configuration-editor source.
 
 `apps/android` and `apps/ios` are explicitly excluded from the root workspace and declare independent native workspaces. The mobile contribution contains 21 source files and has received static checks only; native compilation, UI rendering and VPN operation have not been validated.
 
-The root Cargo.lock has been reconciled through normal Cargo processing during a targeted `cargo tree` preflight. Its SHA-256 at this checkpoint is:
+The root Cargo.lock was reconciled using normal Cargo processing for the shared-parser extraction. Its SHA-256 at this checkpoint is:
 
-`146873de3879fe0d4bc9b7e03188c097aa5561cde08b317b3b91ddb42a1f5f30`
+`4f0c63aab9c029b50ed9236bba135098680289980d69e2b2121417c598a5dc74`
 
-The reconciliation added the expanded local dependency edges and mobile-UI package record without changing any original registry version or checksum. The preflight stopped at its source-download budget before completing graph output. Lock reconciliation is not evidence that the complete selected metadata graph, desktop build or test suite passed.
+The current extraction has passed the actual-workspace core test gate and a Linux headless desktop compatibility compile with eight exact pure tests. These are distinct scoped results, not a GUI, whole-suite, native-platform or VPN-runtime pass.
 
 ## Implemented extractions
 
@@ -47,7 +47,13 @@ Core `parser` contains the unchanged upstream common parsing helpers, excluding 
 
 Six additional integration tests in `parser_models_compatibility.rs` cover complete DTO JSON roundtrips with arbitrary nested protocol configuration, nullable summary fields and actual desktop aliases; padded/unpadded base64; entity/wrapper normalization; the existing URI extraction schemes; IPv6, query parsing and invalid authorities.
 
-Full protocol-to-node parsing remains desktop-side. There is no core `parse_subscription` API yet. In particular, URI text extraction is not equivalent to validating or constructing protocol nodes.
+### Full shared subscription/protocol parser
+
+Core now exposes `parser::parse_subscription`, URI and Clash parsers, OpenRung parsing, and pure WARP/MASQUE parsing. These reuse the upstream implementations rather than introducing a second parser. `NodeMetadataProvider` explicitly supplies each node ID and timestamp; the desktop compatibility adapter retains UUID generation and the clock. Date-template expansion also remains desktop-side.
+
+Rule parsing and geo category scanning use an explicit `GeoProvider`. Native callers can supply asset bytes through `BytesGeoProvider` or a precise unavailable reason. Present categories are accepted; known absent categories are filtered with diagnostics. Missing, unreadable or malformed inventories remain distinguishable from an actual scanned absence and retain upstream defer-to-engine validation behavior. Desktop filesystem inventory access stays in its provider; the core does not choose data paths or read geo files.
+
+Entropy, key generation and WARP registration remain desktop-side. Moving pure MASQUE parsing does not move those operations into core. Desktop public parser signatures are retained through compatibility adapters. Mobile import UI and native VPN integration are not wired to this parser yet.
 
 ## Verification status
 
@@ -55,7 +61,9 @@ Full protocol-to-node parsing remains desktop-side. There is no core `parse_subs
 |---|---|---|
 | Initial configuration extraction | Standalone copied core/facade workspace: 12 original + 6 compatibility tests passed using Rust 1.88 and normal Cargo `--locked --offline` | Historical scope, before the DTO/parser expansion; not a whole-root-workspace pass |
 | Expanded core including DTO/parser extraction | Standalone copied core plus actual config/model/parser facades: 24 tests passed (12 original + 6 config compatibility + 6 parser/DTO compatibility), zero failed/ignored/filtered, Rust 1.88 with normal Cargo `--locked --offline`; 23-package graph | Copied sources reverified against the current fork; this is not an integrated root-workspace, GUI or mobile gate |
-| Root dependency lock | Cargo reconciled local package edges; original registry versions/checksums retained | Selected graph output and full build remain incomplete |
+| Full shared parser, current actual workspace | 71/71 core tests passed: 54 unit + 17 integration (6 config compatibility, 6 parser/DTO compatibility, 5 full-parser extraction) | Core scope only; not GUI, native platforms or runtime |
+| Linux headless desktop compatibility | Root headless test harness compiled; eight exact pure regression tests passed | Not the complete root test suite; application main, GUI and engine runtime were not launched |
+| Root dependency lock | Normal Cargo reconciliation for the shared parser; checkpoint hash above | Lock reconciliation alone is not cross-platform or runtime validation |
 | Mobile source | 21 files, static checks only | No native compile, rendering, device lifecycle or VPN evidence |
 | Desktop runtime | Not launched as validation | No claim that main/GUI, engine execution or host networking has been tested |
 
@@ -72,7 +80,7 @@ Core has no build.rs, network client, engine downloader, shell command or implic
 
 ## Next extraction boundaries
 
-1. **Protocol parser:** separate Clash rule parsing from filesystem-backed geo-category inventories without silently dropping rules; separate WARP/MASQUE parsing from random-key generation; parameterize node UUID/time construction. Preserve protocols and desktop policy through explicit context/adapters, not absent-data stubs.
+1. **Parser consumers:** wire the shared parser into mobile import UI with explicit metadata and geo providers. Preserve diagnostics and protocol fields; do not substitute absent-data stubs or report a VPN connection from a successful import.
 2. **Rules/config compilation:** reuse upstream IR rather than introduce a second compiler. Inject geo inventories and connectivity-test settings; separate pure compiler inputs from file lookup and executable discovery. Preserve golden outputs per backend.
 3. **Data layer:** accept explicit storage roots and repository interfaces. Place SQLite in a separate, feature-gated data adapter rather than the always-linked pure core. Keep profile file import/export explicit.
 4. **Native adapters:** implement lifecycle/capability contracts with honest unsupported states, cancellation and typed failures. Never route a mobile build through the desktop platform fallback to Linux executable assets.

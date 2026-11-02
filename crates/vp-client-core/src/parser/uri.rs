@@ -7,49 +7,53 @@ use crate::models::Node;
 use serde_json::json;
 use url::Url;
 
-pub fn parse_uri(uri: &str, source_id: Option<&str>) -> Option<Node> {
+pub fn parse_uri(
+    uri: &str,
+    source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
+) -> Option<Node> {
     let uri = normalize_uri(uri);
     let lower = uri.to_ascii_lowercase();
 
     // Some subscription dumps mislabel VLESS/VMess links as ss://
     if lower.starts_with("ss://") {
-        if let Some(node) = try_parse_mislabeled_ss_as_vless(&uri, source_id) {
+        if let Some(node) = try_parse_mislabeled_ss_as_vless(&uri, source_id, metadata) {
             return Some(node);
         }
-        if let Some(node) = try_parse_mislabeled_ss_as_vmess(&uri, source_id) {
+        if let Some(node) = try_parse_mislabeled_ss_as_vmess(&uri, source_id, metadata) {
             return Some(node);
         }
-        return parse_ss(&uri, source_id);
+        return parse_ss(&uri, source_id, metadata);
     }
     if lower.starts_with("vmess://") {
-        return parse_vmess(&uri, source_id);
+        return parse_vmess(&uri, source_id, metadata);
     }
     if lower.starts_with("vless://") {
-        return parse_vless(&uri, source_id);
+        return parse_vless(&uri, source_id, metadata);
     }
     if lower.starts_with("trojan://") {
-        return parse_trojan(&uri, source_id);
+        return parse_trojan(&uri, source_id, metadata);
     }
     if lower.starts_with("tuic://") {
-        return parse_tuic(&uri, source_id);
+        return parse_tuic(&uri, source_id, metadata);
     }
     if lower.starts_with("ssr://") || lower.starts_with("shadowsocksr://") {
-        return parse_ssr(&uri, source_id);
+        return parse_ssr(&uri, source_id, metadata);
     }
     if lower.starts_with("wireguard://") || lower.starts_with("wg://") {
-        return parse_wireguard(&uri, source_id);
+        return parse_wireguard(&uri, source_id, metadata);
     }
     if lower.starts_with("hysteria2://") || lower.starts_with("hy2://") {
-        return parse_hysteria2(&uri, source_id);
+        return parse_hysteria2(&uri, source_id, metadata);
     }
     if lower.starts_with("hysteria://") {
-        return parse_hysteria1(&uri, source_id);
+        return parse_hysteria1(&uri, source_id, metadata);
     }
     if lower.starts_with("socks5://") || lower.starts_with("socks://") {
-        return parse_socks(&uri, source_id);
+        return parse_socks(&uri, source_id, metadata);
     }
     if lower.starts_with("masque://") {
-        return super::warp_masque::parse_masque_uri(&uri, source_id);
+        return super::warp_masque::parse_masque_uri(&uri, source_id, metadata);
     }
     if lower.starts_with("http://") || lower.starts_with("https://") {
         // Only treat as proxy URI when it has userinfo (proxy auth style)
@@ -57,14 +61,18 @@ pub fn parse_uri(uri: &str, source_id: Option<&str>) -> Option<Node> {
             if u.username().is_empty() {
                 return None;
             }
-            return parse_http_proxy(&uri, source_id);
+            return parse_http_proxy(&uri, source_id, metadata);
         }
     }
     None
 }
 
 /// ss://uuid@host:port?type=ws&security=tls... is often a mislabeled vless link.
-fn try_parse_mislabeled_ss_as_vless(uri: &str, source_id: Option<&str>) -> Option<Node> {
+fn try_parse_mislabeled_ss_as_vless(
+    uri: &str,
+    source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
+) -> Option<Node> {
     let rest = uri.trim_start_matches("ss://").trim_start_matches("SS://");
     let (body, _) = split_fragment(rest);
     if !body.contains('@') || !body.contains('?') {
@@ -90,14 +98,18 @@ fn try_parse_mislabeled_ss_as_vless(uri: &str, source_id: Option<&str>) -> Optio
     }
     let _ = split_host_port(hostport)?;
     let rewritten = format!("vless://{rest}");
-    parse_vless(&rewritten, source_id).map(|mut n| {
+    parse_vless(&rewritten, source_id, metadata).map(|mut n| {
         n.raw = uri.to_string();
         n
     })
 }
 
 /// ss://eyJ... base64 JSON is often a mislabeled vmess payload.
-fn try_parse_mislabeled_ss_as_vmess(uri: &str, source_id: Option<&str>) -> Option<Node> {
+fn try_parse_mislabeled_ss_as_vmess(
+    uri: &str,
+    source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
+) -> Option<Node> {
     let rest = uri.trim_start_matches("ss://").trim_start_matches("SS://");
     let (body, _) = split_fragment(rest);
     // Only attempt when body looks like base64 JSON (starts with eyJ after optional pad).
@@ -107,13 +119,17 @@ fn try_parse_mislabeled_ss_as_vmess(uri: &str, source_id: Option<&str>) -> Optio
         return None;
     }
     let rewritten = format!("vmess://{cleaned}");
-    parse_vmess(&rewritten, source_id).map(|mut n| {
+    parse_vmess(&rewritten, source_id, metadata).map(|mut n| {
         n.raw = uri.to_string();
         n
     })
 }
 
-fn parse_ss(uri: &str, source_id: Option<&str>) -> Option<Node> {
+fn parse_ss(
+    uri: &str,
+    source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
+) -> Option<Node> {
     let rest = uri.trim_start_matches("ss://").trim_start_matches("SS://");
     let (body, fragment) = split_fragment(rest);
     let name = fragment.as_deref().map(percent_decode).unwrap_or_default();
@@ -157,6 +173,7 @@ fn parse_ss(uri: &str, source_id: Option<&str>) -> Option<Node> {
             uri,
             config,
             source_id,
+            metadata,
         ));
     }
 
@@ -166,7 +183,7 @@ fn parse_ss(uri: &str, source_id: Option<&str>) -> Option<Node> {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&decoded) {
             if v.get("add").is_some() || v.get("id").is_some() {
                 let rewritten = format!("vmess://{body}");
-                return parse_vmess(&rewritten, source_id).map(|mut n| {
+                return parse_vmess(&rewritten, source_id, metadata).map(|mut n| {
                     n.raw = uri.to_string();
                     n
                 });
@@ -194,10 +211,15 @@ fn parse_ss(uri: &str, source_id: Option<&str>) -> Option<Node> {
         uri,
         config,
         source_id,
+        metadata,
     ))
 }
 
-fn parse_vmess(uri: &str, source_id: Option<&str>) -> Option<Node> {
+fn parse_vmess(
+    uri: &str,
+    source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
+) -> Option<Node> {
     let rest = uri
         .trim_start_matches("vmess://")
         .trim_start_matches("VMESS://");
@@ -227,11 +249,15 @@ fn parse_vmess(uri: &str, source_id: Option<&str>) -> Option<Node> {
         obj.insert("name".into(), json!(name));
     }
     Some(make_node(
-        "vmess", &name, &server, port, uri, config, source_id,
+        "vmess", &name, &server, port, uri, config, source_id, metadata,
     ))
 }
 
-fn parse_vless(uri: &str, source_id: Option<&str>) -> Option<Node> {
+fn parse_vless(
+    uri: &str,
+    source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
+) -> Option<Node> {
     if let Ok(url) = Url::parse(uri) {
         let uuid = percent_decode(url.username());
         if uuid.is_empty() {
@@ -241,7 +267,9 @@ fn parse_vless(uri: &str, source_id: Option<&str>) -> Option<Node> {
         let port = url.port().unwrap_or(443);
         let name = url.fragment().map(percent_decode).unwrap_or_default();
         let q = parse_query(url.query().unwrap_or(""));
-        return Some(vless_node(uri, source_id, &uuid, &host, port, &name, q));
+        return Some(vless_node(
+            uri, source_id, metadata, &uuid, &host, port, &name, q,
+        ));
     }
 
     // Fallback for odd fragments / encoding that Url rejects.
@@ -250,12 +278,15 @@ fn parse_vless(uri: &str, source_id: Option<&str>) -> Option<Node> {
         return None;
     }
     let q = parse_query(&query);
-    Some(vless_node(uri, source_id, &uuid, &host, port, &name, q))
+    Some(vless_node(
+        uri, source_id, metadata, &uuid, &host, port, &name, q,
+    ))
 }
 
 fn vless_node(
     uri: &str,
     source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
     uuid: &str,
     host: &str,
     port: u16,
@@ -286,10 +317,14 @@ fn vless_node(
         // 查询参数来自订阅链接本身，不能让它关掉证书校验。
         "allowInsecure": json!(false),
     });
-    make_node("vless", name, host, port, uri, config, source_id)
+    make_node("vless", name, host, port, uri, config, source_id, metadata)
 }
 
-fn parse_trojan(uri: &str, source_id: Option<&str>) -> Option<Node> {
+fn parse_trojan(
+    uri: &str,
+    source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
+) -> Option<Node> {
     if let Ok(url) = Url::parse(uri) {
         let password = percent_decode(url.username());
         if password.is_empty() {
@@ -300,7 +335,7 @@ fn parse_trojan(uri: &str, source_id: Option<&str>) -> Option<Node> {
         let name = url.fragment().map(percent_decode).unwrap_or_default();
         let q = parse_query(url.query().unwrap_or(""));
         return Some(trojan_node(
-            uri, source_id, &password, &host, port, &name, q,
+            uri, source_id, metadata, &password, &host, port, &name, q,
         ));
     }
     let (_scheme, password, port, host, query, name) = parse_authority(uri)?;
@@ -309,13 +344,14 @@ fn parse_trojan(uri: &str, source_id: Option<&str>) -> Option<Node> {
     }
     let q = parse_query(&query);
     Some(trojan_node(
-        uri, source_id, &password, &host, port, &name, q,
+        uri, source_id, metadata, &password, &host, port, &name, q,
     ))
 }
 
 fn trojan_node(
     uri: &str,
     source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
     password: &str,
     host: &str,
     port: u16,
@@ -339,10 +375,14 @@ fn trojan_node(
         // 查询参数来自订阅链接本身，不能让它关掉证书校验。
         "allowInsecure": json!(false),
     });
-    make_node("trojan", name, host, port, uri, config, source_id)
+    make_node("trojan", name, host, port, uri, config, source_id, metadata)
 }
 
-fn parse_hysteria2(uri: &str, source_id: Option<&str>) -> Option<Node> {
+fn parse_hysteria2(
+    uri: &str,
+    source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
+) -> Option<Node> {
     let normalized =
         uri.replacen("hy2://", "hysteria2://", 1)
             .replacen("HY2://", "hysteria2://", 1);
@@ -371,6 +411,7 @@ fn parse_hysteria2(uri: &str, source_id: Option<&str>) -> Option<Node> {
             uri,
             config,
             source_id,
+            metadata,
         ));
     }
     let (_scheme, auth, port, host, query, name) = parse_authority(&normalized)?;
@@ -394,10 +435,15 @@ fn parse_hysteria2(uri: &str, source_id: Option<&str>) -> Option<Node> {
         uri,
         config,
         source_id,
+        metadata,
     ))
 }
 
-fn parse_socks(uri: &str, source_id: Option<&str>) -> Option<Node> {
+fn parse_socks(
+    uri: &str,
+    source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
+) -> Option<Node> {
     let url = Url::parse(uri).ok()?;
     let host = url.host_str()?.to_string();
     let port = url.port().unwrap_or(1080);
@@ -413,11 +459,15 @@ fn parse_socks(uri: &str, source_id: Option<&str>) -> Option<Node> {
         "name": name,
     });
     Some(make_node(
-        "socks5", &name, &host, port, uri, config, source_id,
+        "socks5", &name, &host, port, uri, config, source_id, metadata,
     ))
 }
 
-fn parse_http_proxy(uri: &str, source_id: Option<&str>) -> Option<Node> {
+fn parse_http_proxy(
+    uri: &str,
+    source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
+) -> Option<Node> {
     let url = Url::parse(uri).ok()?;
     let host = url.host_str()?.to_string();
     let port = url
@@ -436,11 +486,15 @@ fn parse_http_proxy(uri: &str, source_id: Option<&str>) -> Option<Node> {
         "name": name,
     });
     Some(make_node(
-        "http", &name, &host, port, uri, config, source_id,
+        "http", &name, &host, port, uri, config, source_id, metadata,
     ))
 }
 
-fn parse_tuic(uri: &str, source_id: Option<&str>) -> Option<Node> {
+fn parse_tuic(
+    uri: &str,
+    source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
+) -> Option<Node> {
     let (mut uuid, mut password, host, port, name, q) = if let Ok(url) = Url::parse(uri) {
         let u = percent_decode(url.username());
         let p = url.password().map(percent_decode).unwrap_or_default();
@@ -530,11 +584,15 @@ fn parse_tuic(uri: &str, source_id: Option<&str>) -> Option<Node> {
     });
 
     Some(make_node(
-        "tuic", &name, &host, port, uri, config, source_id,
+        "tuic", &name, &host, port, uri, config, source_id, metadata,
     ))
 }
 
-fn parse_ssr(uri: &str, source_id: Option<&str>) -> Option<Node> {
+fn parse_ssr(
+    uri: &str,
+    source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
+) -> Option<Node> {
     let raw_b64 = uri
         .trim_start_matches("ssr://")
         .trim_start_matches("SSR://")
@@ -600,11 +658,22 @@ fn parse_ssr(uri: &str, source_id: Option<&str>) -> Option<Node> {
     });
 
     Some(make_node(
-        "shadowsocksr", &name, &host, port, uri, config, source_id,
+        "shadowsocksr",
+        &name,
+        &host,
+        port,
+        uri,
+        config,
+        source_id,
+        metadata,
     ))
 }
 
-fn parse_wireguard(uri: &str, source_id: Option<&str>) -> Option<Node> {
+fn parse_wireguard(
+    uri: &str,
+    source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
+) -> Option<Node> {
     let normalized = uri
         .replacen("wg://", "wireguard://", 1)
         .replacen("WG://", "wireguard://", 1);
@@ -712,11 +781,22 @@ fn parse_wireguard(uri: &str, source_id: Option<&str>) -> Option<Node> {
     }
 
     Some(make_node(
-        "wireguard", &name, &host, port, uri, config, source_id,
+        "wireguard",
+        &name,
+        &host,
+        port,
+        uri,
+        config,
+        source_id,
+        metadata,
     ))
 }
 
-fn parse_hysteria1(uri: &str, source_id: Option<&str>) -> Option<Node> {
+fn parse_hysteria1(
+    uri: &str,
+    source_id: Option<&str>,
+    metadata: &mut impl super::NodeMetadataProvider,
+) -> Option<Node> {
     let (mut auth, host, port, name, q) = if let Ok(url) = Url::parse(uri) {
         let auth = percent_decode(url.username());
         let host = url.host_str()?.to_string();
@@ -821,7 +901,7 @@ fn parse_hysteria1(uri: &str, source_id: Option<&str>) -> Option<Node> {
     });
 
     Some(make_node(
-        "hysteria", &name, &host, port, uri, config, source_id,
+        "hysteria", &name, &host, port, uri, config, source_id, metadata,
     ))
 }
 
@@ -845,6 +925,7 @@ fn parse_port_value(v: &serde_json::Value) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::test_support::parse_uri;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
 
@@ -865,7 +946,9 @@ mod tests {
             Some("secretpass")
         );
         assert_eq!(
-            node.config.get("congestion-controller").and_then(|v| v.as_str()),
+            node.config
+                .get("congestion-controller")
+                .and_then(|v| v.as_str()),
             Some("bbr")
         );
     }
@@ -918,7 +1001,11 @@ mod tests {
             node.config.get("public-key").and_then(|v| v.as_str()),
             Some("cHVibGljX2tleQ==")
         );
-        let res = node.config.get("reserved").and_then(|v| v.as_array()).expect("reserved array");
+        let res = node
+            .config
+            .get("reserved")
+            .and_then(|v| v.as_array())
+            .expect("reserved array");
         assert_eq!(res.len(), 3);
         assert_eq!(res[0], 1);
     }

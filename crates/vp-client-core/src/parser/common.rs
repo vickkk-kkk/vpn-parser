@@ -1,5 +1,5 @@
 //! Pure upstream subscription-text and URI helpers.
-//! Protocol-to-node parsing remains in the desktop adapter for now.
+//! Shared by the full protocol parser.
 
 use base64::{
     engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD},
