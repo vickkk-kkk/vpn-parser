@@ -96,15 +96,36 @@ pub struct SubscriptionUserinfo {
     pub expire: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// 把文本里所有 http(s) URL 的 query 部分抹掉——订阅 URL 常内嵌付费 token，
-/// 不得写进本地日志或源状态字段。既用于纯 URL，也用于可能夹带 URL 的错误信息。
-fn redact_url_query(text: &str) -> String {
-    static URL_QUERY: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re = URL_QUERY.get_or_init(|| {
-        // query 段同时排除 `)`：reqwest 错误文本里 URL 常被包在圆括号里
-        regex::Regex::new(r"(https?://[^\s?#]+)\?[^\s#)]*").expect("valid url query regex")
-    });
-    re.replace_all(text, "$1").into_owned()
+/// Diagnostic-only origin. Subscription credentials may occur in any URL component;
+/// never fall back to the input, even when it is malformed or is a local file path.
+/// Reconstructing the HTTP(S) origin avoids retaining userinfo, path, query or fragment.
+fn diagnostic_url_origin(raw: &str) -> String {
+    let Ok(url) = reqwest::Url::parse(raw) else {
+        return "[redacted URL]".into();
+    };
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return "[redacted URL]".into();
+    }
+    url.origin().ascii_serialization()
+}
+
+/// Error strings can contain URLs, redirect targets, local paths, header values or
+/// arbitrary nested causes. A URL regex cannot safely sanitize all of these. Emit
+/// only a fixed diagnostic category, never any part of the supplied message.
+/// This is deliberately separate from the original result used for retries and UI.
+fn diagnostic_fetch_error(message: &str) -> &'static str {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("timeout") || lower.contains("timed out") || lower.contains("超时") {
+        "timeout"
+    } else if lower.contains("read body failed") || lower.contains("body read failed") {
+        "response body failure"
+    } else if lower.contains("request failed") || lower.contains("error sending request") {
+        "request failure"
+    } else if lower.starts_with("http ") {
+        "HTTP failure"
+    } else {
+        "fetch failure (details redacted)"
+    }
 }
 
 pub fn parse_subscription_userinfo(header: &str) -> SubscriptionUserinfo {
@@ -223,14 +244,13 @@ impl Collector {
             let resolved_url = expand_url_template(&source.url_template);
             // t.me/s/<频道> 走单独一条通道：网页预览、翻页、只增不删。
             if let Some(channel) = telegram::channel_name(&resolved_url) {
-                info!(name = %source.name, channel = %channel, "fetching telegram channel");
+                info!(source_id = %source.id, "fetching telegram channel");
                 return self
                     .fetch_telegram_source(source, &channel, task_id, attempt_budget)
                     .await;
             }
-            // 订阅 URL 常内嵌付费 token（query 或路径段），日志里只留 scheme://host/path，
-            // 丢弃 query——足够定位是哪个源，又不把凭据写进本地日志文件
-            info!(name = %source.name, url = %redact_url_query(&resolved_url), "fetching source");
+            // Log only the origin; the unchanged URL below is used for the request.
+            info!(source_id = %source.id, url = %diagnostic_url_origin(&resolved_url), "fetching source");
             self.tasks
                 .phase(task_id, &source.id, TaskPhase::Downloading);
             let download_started = Instant::now();
@@ -245,7 +265,7 @@ impl Collector {
                 .await
             {
                 Err(message) => {
-                    warn!(name = %source.name, error = %redact_url_query(&message), "fetch failed");
+                    warn!(source_id = %source.id, error = diagnostic_fetch_error(&message), "fetch failed");
                     self.mark_source_fetched(&source.id, &message, 0).await;
                     return FetchResult {
                         source_id: source.id.clone(),
@@ -292,13 +312,7 @@ impl Collector {
             if let Some(ui) = userinfo {
                 let _ = self
                     .db
-                    .update_source_userinfo(
-                        &source.id,
-                        ui.upload,
-                        ui.download,
-                        ui.total,
-                        ui.expire,
-                    )
+                    .update_source_userinfo(&source.id, ui.upload, ui.download, ui.total, ui.expire)
                     .await;
             }
             let via_note = match via.as_deref() {
@@ -337,31 +351,33 @@ impl Collector {
             let parse_started = Instant::now();
             let source_id = source.id.clone();
             let parse_permit = PARSE_LIMIT.clone().acquire_owned().await;
-            let (nodes, extracted_rules, raw_rules_yaml, raw_groups_yaml) = match tokio::task::spawn_blocking(move || {
-                let _permit = parse_permit;
-                let body = String::from_utf8_lossy(&body);
-                let (rules_yaml, groups_yaml) = crate::parser::extract_subscription_rules_and_groups(&body);
-                let rules = crate::parser::extract_subscription_rules(&body);
-                let nodes = parse_subscription(&body, Some(&source_id));
-                (nodes, rules, rules_yaml, groups_yaml)
-            })
-            .await
-            {
-                Ok(tuple) => tuple,
-                Err(error) => {
-                    let message = format!("parse task failed: {error}");
-                    self.mark_source_fetched(&source.id, &message, 0).await;
-                    return FetchResult {
-                        source_id: source.id.clone(),
-                        source_name: source.name.clone(),
-                        resolved_url,
-                        success: false,
-                        message,
-                        node_count: 0,
-                        extracted_rules: Vec::new(),
-                    };
-                }
-            };
+            let (nodes, extracted_rules, raw_rules_yaml, raw_groups_yaml) =
+                match tokio::task::spawn_blocking(move || {
+                    let _permit = parse_permit;
+                    let body = String::from_utf8_lossy(&body);
+                    let (rules_yaml, groups_yaml) =
+                        crate::parser::extract_subscription_rules_and_groups(&body);
+                    let rules = crate::parser::extract_subscription_rules(&body);
+                    let nodes = parse_subscription(&body, Some(&source_id));
+                    (nodes, rules, rules_yaml, groups_yaml)
+                })
+                .await
+                {
+                    Ok(tuple) => tuple,
+                    Err(error) => {
+                        let message = format!("parse task failed: {error}");
+                        self.mark_source_fetched(&source.id, &message, 0).await;
+                        return FetchResult {
+                            source_id: source.id.clone(),
+                            source_name: source.name.clone(),
+                            resolved_url,
+                            success: false,
+                            message,
+                            node_count: 0,
+                            extracted_rules: Vec::new(),
+                        };
+                    }
+                };
             self.tasks.timings(
                 task_id,
                 &source.id,
@@ -451,7 +467,7 @@ impl Collector {
             .ok()
             .and_then(|m| m.modified().ok())
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
-        info!(path = %path, bytes = bytes.len(), "reading local file source");
+        info!(bytes = bytes.len(), "reading local file source");
         Ok(Some(Downloaded {
             body: bytes,
             final_url: resolved_url.to_string(),
@@ -775,7 +791,10 @@ impl Collector {
         );
         info!(
             source = GIST_DISCOVERY_SOURCE_ID,
-            message, "gist discovery finished"
+            pages = summary.pages_scanned,
+            registered = summary.registered,
+            nodes = summary.nodes,
+            "gist discovery finished"
         );
         self.tasks
             .complete(&task_id, GIST_DISCOVERY_SOURCE_ID, message);
@@ -810,7 +829,10 @@ impl Collector {
                 {
                     Ok(created) => created,
                     Err(error) => {
-                        warn!(gist = %gist.id, error = %error, "gist 源注册失败");
+                        warn!(
+                            error = diagnostic_fetch_error(&error.to_string()),
+                            "gist 源注册失败"
+                        );
                         return (gist, 0usize, GistOutcome::Failed);
                     }
                 };
@@ -938,8 +960,8 @@ impl Collector {
                 break;
             }
             warn!(
-                source = %source.name,
-                error = %result.message,
+                source_id = %source.id,
+                error = diagnostic_fetch_error(&result.message),
                 delay_ms = delay.as_millis() as u64,
                 "retrying transient subscription fetch failure"
             );
@@ -960,11 +982,13 @@ impl Collector {
         {
             Ok(streak) if streak >= DEGRADED_FAIL_STREAK && streak != source.fail_streak => {
                 warn!(
-                    source = %source.name,
+                    source_id = %source.id,
                     streak, "订阅源连续网络超时，后续拉取只单次尝试"
                 );
             }
-            Err(error) => warn!(source = %source.name, error = %error, "记录拉取结果失败"),
+            Err(error) => {
+                warn!(source_id = %source.id, error = diagnostic_fetch_error(&error.to_string()), "记录拉取结果失败")
+            }
             _ => {}
         }
         if result.success {
@@ -1221,23 +1245,24 @@ pub fn local_file_path(url: &str) -> Option<String> {
     };
 
     // 3. 处理 ~ 家目录扩展（例如 macOS / Linux 常见的 ~/Downloads/clash.yaml）
-    let path_str = if unescaped == "~" || unescaped.starts_with("~/") || unescaped.starts_with("~\\") {
-        let home = std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
-            .map(std::path::PathBuf::from);
-        if let Some(home_path) = home {
-            if unescaped == "~" {
-                home_path.to_string_lossy().to_string()
+    let path_str =
+        if unescaped == "~" || unescaped.starts_with("~/") || unescaped.starts_with("~\\") {
+            let home = std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(std::path::PathBuf::from);
+            if let Some(home_path) = home {
+                if unescaped == "~" {
+                    home_path.to_string_lossy().to_string()
+                } else {
+                    let sub = &unescaped[2..];
+                    home_path.join(sub).to_string_lossy().to_string()
+                }
             } else {
-                let sub = &unescaped[2..];
-                home_path.join(sub).to_string_lossy().to_string()
+                unescaped
             }
         } else {
             unescaped
-        }
-    } else {
-        unescaped
-    };
+        };
 
     // 4. 判定是否为合法的本地文件系统路径
     let b = path_str.as_bytes();
@@ -1384,7 +1409,8 @@ mod tests {
 
     #[test]
     fn test_parse_subscription_userinfo() {
-        let header = "upload=1073741824; download=2147483648; total=107374182400; expire=1700000000";
+        let header =
+            "upload=1073741824; download=2147483648; total=107374182400; expire=1700000000";
         let info = parse_subscription_userinfo(header);
         assert_eq!(info.upload, Some(1073741824));
         assert_eq!(info.download, Some(2147483648));
@@ -1392,23 +1418,72 @@ mod tests {
         assert!(info.expire.is_some());
     }
 
-    /// 订阅 URL 内嵌的付费 token 不得进日志：query 被抹掉、路径与错误上下文保留。
     #[test]
-    fn redact_url_query_strips_query_keeps_context() {
+    fn diagnostic_url_origin_excludes_all_subscription_credentials() {
+        for input in [
+            "https://synthetic-user:synthetic-password@sub.example.test/token/synthetic-path?token=synthetic-query#synthetic-fragment",
+            "https://sub.example.test/token/synthetic-path",
+            "https://sub.example.test/?token=synthetic-query",
+            "https://sub.example.test/#synthetic-fragment",
+            "HTTPS://synthetic%40user:synthetic%3Apassword@SUB.EXAMPLE.TEST/%73ynthetic-path",
+        ] {
+            assert_eq!(diagnostic_url_origin(input), "https://sub.example.test");
+        }
         assert_eq!(
-            redact_url_query("https://sub.example.com/token/abc?token=secret&flag=1"),
-            "https://sub.example.com/token/abc"
+            diagnostic_url_origin("http://user:password@[::1]:8080/private?token=value#label"),
+            "http://[::1]:8080"
         );
-        // 错误信息里夹带 URL：URL 脱敏，其余文本原样保留
         assert_eq!(
-            redact_url_query("error sending request for url (https://a.b/c?token=x): timeout"),
-            "error sending request for url (https://a.b/c): timeout"
+            diagnostic_url_origin(
+                "https://gh-proxy.com/https://user:password@sub.example.test/token"
+            ),
+            "https://gh-proxy.com"
         );
-        // 无 query 的 URL 原样保留
-        assert_eq!(
-            redact_url_query("https://plain.example.com/path"),
-            "https://plain.example.com/path"
-        );
+    }
+
+    #[test]
+    fn diagnostic_url_origin_never_echoes_invalid_or_non_http_input() {
+        for input in [
+            "",
+            "synthetic-secret",
+            "https://[synthetic-secret",
+            "https://",
+            "/private/synthetic-secret",
+            "file:///private/synthetic-secret",
+            "data:text/plain,synthetic-secret",
+            "synthetic-secret:opaque",
+            "https://bad host/synthetic-secret",
+            "//user:password@host/token",
+        ] {
+            assert_eq!(diagnostic_url_origin(input), "[redacted URL]");
+        }
+    }
+
+    #[test]
+    fn diagnostic_fetch_errors_never_echo_urls_or_arbitrary_causes() {
+        let url = "https://synthetic-user:synthetic-password@sub.example.test/synthetic-path?synthetic-query#synthetic-fragment";
+        for (message, expected) in [
+            (
+                format!("request failed: error sending request for url ({url})"),
+                "request failure",
+            ),
+            (
+                format!("read body failed: {url}: nested secret"),
+                "response body failure",
+            ),
+            (format!("timeout for {url}"), "timeout"),
+            (format!("HTTP 403 {url}"), "HTTP failure"),
+            (
+                format!("malformed URL https://[synthetic-secret {url}"),
+                "fetch failure (details redacted)",
+            ),
+            (
+                "arbitrary synthetic-password without a URL".into(),
+                "fetch failure (details redacted)",
+            ),
+        ] {
+            assert_eq!(diagnostic_fetch_error(&message), expected);
+        }
     }
 
     #[test]
@@ -1445,7 +1520,9 @@ mod tests {
             let std_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             std_listener.local_addr().unwrap().port()
         };
-        TcpListener::bind(format!("127.0.0.1:{port}")).await.unwrap()
+        TcpListener::bind(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
