@@ -1,0 +1,213 @@
+{
+  "fontToolsVersion": "4.61.1",
+  "sourceSha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
+  "outputSha256": "2b5bc38030372fa6a860fecd6f3455c422cab0660052cbf590fdcefb2dfc76c7",
+  "outputBytes": 10596008,
+  "unicodeCodepoints": 30890,
+  "sameCmapAsSource": true,
+  "staticNoFvarGvar": true,
+  "weight": 400,
+  "sampleOutlineMetrics": {
+    "中": {
+      "glyph": "uni4E2D",
+      "advance": 1000,
+      "bounds": [
+        96,
+        -79,
+        902,
+        840
+      ]
+    },
+    "文": {
+      "glyph": "uni2F42",
+      "advance": 1000,
+      "bounds": [
+        36,
+        -78,
+        967,
+        847
+      ]
+    },
+    "导": {
+      "glyph": "uni5BFC",
+      "advance": 1000,
+      "bounds": [
+        62,
+        -76,
+        944,
+        800
+      ]
+    },
+    "入": {
+      "glyph": "uni2F0A",
+      "advance": 1000,
+      "bounds": [
+        41,
+        -73,
+        964,
+        819
+      ]
+    },
+    "订": {
+      "glyph": "uni8BA2",
+      "advance": 1000,
+      "bounds": [
+        50,
+        -75,
+        960,
+        820
+      ]
+    },
+    "阅": {
+      "glyph": "uni9605",
+      "advance": 1000,
+      "bounds": [
+        91,
+        -80,
+        909,
+        828
+      ]
+    },
+    "节": {
+      "glyph": "uni8282",
+      "advance": 1000,
+      "bounds": [
+        55,
+        -78,
+        946,
+        840
+      ]
+    },
+    "点": {
+      "glyph": "uni70B9",
+      "advance": 1000,
+      "bounds": [
+        42,
+        -79,
+        951,
+        840
+      ]
+    },
+    "连": {
+      "glyph": "uni8FDE",
+      "advance": 1000,
+      "bounds": [
+        30,
+        -82,
+        974,
+        840
+      ]
+    },
+    "接": {
+      "glyph": "uni63A5",
+      "advance": 1000,
+      "bounds": [
+        28,
+        -82,
+        963,
+        839
+      ]
+    },
+    "測": {
+      "glyph": "uni6E2C",
+      "advance": 1000,
+      "bounds": [
+        38,
+        -83,
+        923,
+        840
+      ]
+    },
+    "試": {
+      "glyph": "uni8A66",
+      "advance": 1000,
+      "bounds": [
+        47,
+        -81,
+        968,
+        844
+      ]
+    },
+    "日": {
+      "glyph": "uni2F47",
+      "advance": 1000,
+      "bounds": [
+        176,
+        -69,
+        832,
+        772
+      ]
+    },
+    "本": {
+      "glyph": "uni672C",
+      "advance": 1000,
+      "bounds": [
+        37,
+        -80,
+        965,
+        839
+      ]
+    },
+    "語": {
+      "glyph": "uni8A9E",
+      "advance": 1000,
+      "bounds": [
+        44,
+        -80,
+        962,
+        844
+      ]
+    },
+    "A": {
+      "glyph": "A",
+      "advance": 608,
+      "bounds": [
+        4,
+        0,
+        604,
+        733
+      ]
+    },
+    "a": {
+      "glyph": "a",
+      "advance": 563,
+      "bounds": [
+        59,
+        -13,
+        483,
+        557
+      ]
+    },
+    "0": {
+      "glyph": "zero",
+      "advance": 555,
+      "bounds": [
+        50,
+        -13,
+        506,
+        746
+      ]
+    },
+    "1": {
+      "glyph": "one",
+      "advance": 555,
+      "bounds": [
+        88,
+        0,
+        490,
+        733
+      ]
+    },
+    "2": {
+      "glyph": "two",
+      "advance": 555,
+      "bounds": [
+        40,
+        0,
+        505,
+        746
+      ]
+    }
+  },
+  "renderTest": "not performed"
+}

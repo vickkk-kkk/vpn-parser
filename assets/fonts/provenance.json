@@ -1,0 +1,14 @@
+{
+  "family": "PrivateVP Sans SC",
+  "style": "Regular",
+  "license": "SIL Open Font License 1.1",
+  "upstreamFamily": "Noto Sans SC",
+  "upstreamSource": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf",
+  "upstreamSha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
+  "licenseSha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9",
+  "modification": "Full-coverage static wght=400 instance, no subsetting; family and style identity renamed to PrivateVP Sans SC Regular. Copyright and license name records retained.",
+  "recipe": "derive_font.py, fontTools==4.61.1; original timestamps retained",
+  "outputEvidence": "verification.json",
+  "coverageLimit": "Simplified-Chinese-oriented font, not all CJK or emoji; no guarantee of locale-specific Japanese forms.",
+  "validationLimit": "Structural and outline/metric inspection only. No actual egui/native rendering test."
+}
