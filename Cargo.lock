@@ -4289,6 +4289,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "vp-client-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "chrono",
+ "once_cell",
+ "percent-encoding",
+ "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "vp-client-mobile-ui"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "once_cell",
+ "vp-client-core",
+]
+
+[[package]]
 name = "vpn-parser"
 version = "1.15.15"
 dependencies = [
@@ -4327,6 +4350,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "vp-client-core",
  "wgpu",
  "windows-sys 0.59.0",
  "zip",

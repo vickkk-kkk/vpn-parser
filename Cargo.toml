@@ -1,3 +1,8 @@
+[workspace]
+members = ["crates/vp-client-core", "crates/vp-client-mobile-ui"]
+exclude = ["apps/android", "apps/ios"]
+resolver = "2"
+
 [package]
 name = "vpn-parser"
 version = "1.15.15"
@@ -6,6 +11,7 @@ description = "VPN/proxy subscription collector with desktop GUI and HTTP API"
 license = "MIT"
 
 [dependencies]
+vp-client-core = { path = "crates/vp-client-core" }
 anyhow = "1.0"
 axum = { version = "0.8", features = ["macros"] }
 tower = { version = "0.5", features = ["util"] }

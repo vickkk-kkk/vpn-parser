@@ -1,0 +1,18 @@
+[package]
+name = "vp-client-android"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+vp-client-mobile-ui = { path = "../../crates/vp-client-mobile-ui" }
+eframe = { version = "=0.31.1", default-features = false, features = ["default_fonts", "glow", "android-native-activity"] }
+winit = { version = "=0.30.13", default-features = false, features = ["rwh_06", "android-native-activity"] }
+
+# Separate native dependency resolution; do not unify Android with iOS/desktop.
+[workspace]
+resolver = "2"

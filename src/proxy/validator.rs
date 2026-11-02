@@ -4,6 +4,24 @@ use anyhow::{anyhow, Result};
 use std::process::Command;
 use uuid::Uuid;
 
+/// Validation did not run; this must never be interpreted as a successful check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MissingKernelExecutable {
+    pub kernel: KernelKind,
+}
+
+impl std::fmt::Display for MissingKernelExecutable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "未找到 {} 可执行文件；配置尚未经过内核验证", self.kernel.display_name())
+    }
+}
+
+impl std::error::Error for MissingKernelExecutable {}
+
+fn require_executable(kernel: KernelKind, executable: Option<std::path::PathBuf>) -> Result<std::path::PathBuf> {
+    executable.ok_or_else(|| MissingKernelExecutable { kernel }.into())
+}
+
 #[allow(dead_code)]
 pub struct KernelValidator;
 
@@ -17,13 +35,7 @@ impl KernelValidator {
 
     /// 在临时隔离目录中写入配置，并调用内核自检命令进行非侵入式配置语法校验
     pub fn validate_config(kernel: KernelKind, config_text: &str) -> Result<()> {
-        let Some(executable) = find_kernel_executable(kernel) else {
-            tracing::info!(
-                "未找到 {} 可执行文件，跳过内核静态语法验证",
-                kernel.display_name()
-            );
-            return Ok(());
-        };
+        let executable = require_executable(kernel, find_kernel_executable(kernel))?;
 
         let base_dir = crate::data_root().join("run");
         let temp_dir = if std::fs::create_dir_all(&base_dir).is_ok() {
@@ -143,5 +155,24 @@ impl KernelValidator {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_executable_is_not_successful_validation() {
+        let error = require_executable(KernelKind::VpCore, None).unwrap_err();
+        let missing = error.downcast_ref::<MissingKernelExecutable>().unwrap();
+        assert_eq!(missing.kernel, KernelKind::VpCore);
+        assert!(error.to_string().contains("尚未"));
+    }
+
+    #[test]
+    fn executable_requirement_preserves_path_without_running_it() {
+        let path = std::path::PathBuf::from("synthetic-engine-not-executed");
+        assert_eq!(require_executable(KernelKind::Mihomo, Some(path.clone())).unwrap(), path);
     }
 }

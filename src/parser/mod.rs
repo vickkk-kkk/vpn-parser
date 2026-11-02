@@ -8,14 +8,14 @@ pub use clash::{
     extract_clash_groups_yaml, extract_clash_rules, extract_clash_rules_yaml, parse_clash_yaml,
 };
 pub use common::{
-    decode_maybe_base64, expand_url_template, extract_uris, normalize_subscription_text,
+    decode_maybe_base64, extract_uris, normalize_subscription_text,
 };
 pub use openrung::parse_openrung_json;
 pub use uri::parse_uri;
 pub use warp_masque::parse_warp_masque_json;
 
 use crate::models::Node;
-use chrono::Utc;
+use chrono::{Local, Utc};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::json;
@@ -1144,4 +1144,28 @@ proxies:
         assert!(b64_rules.is_some());
         assert!(b64_groups.is_some());
     }
+}
+
+/// Expand date placeholders in subscription URL templates.
+/// Supported: {Ymd} {ymd} {Y} {m} {mm} {d} {dd}
+pub fn expand_url_template(template: &str) -> String {
+    let now = Local::now();
+    let y = now.format("%Y").to_string();
+    let m = now.format("%m").to_string();
+    let d = now.format("%d").to_string();
+    let ymd = format!("{y}{m}{d}");
+    let ymd_short = format!("{}{}{}", &y[2..], m, d);
+    let m_no0 = m.trim_start_matches('0');
+    let d_no0 = d.trim_start_matches('0');
+    let m_short = if m_no0.is_empty() { "0" } else { m_no0 };
+    let d_short = if d_no0.is_empty() { "0" } else { d_no0 };
+
+    template
+        .replace("{Ymd}", &ymd)
+        .replace("{ymd}", &ymd_short)
+        .replace("{Y}", &y)
+        .replace("{mm}", &m)
+        .replace("{m}", m_short)
+        .replace("{dd}", &d)
+        .replace("{d}", d_short)
 }

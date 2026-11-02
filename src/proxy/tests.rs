@@ -1290,6 +1290,7 @@ use std::time::Duration;
     }
 
     #[test]
+    #[ignore = "requires installed engines and executes external validation processes"]
     fn kernel_validator_validates_compiled_configs_with_real_binaries() {
         use crate::proxy::ir::*;
         use crate::proxy::compiler::*;
