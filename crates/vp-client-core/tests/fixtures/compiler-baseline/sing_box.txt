@@ -1,0 +1,245 @@
+{
+  "dns": {
+    "final": "dns-0",
+    "servers": [
+      {
+        "tag": "local",
+        "type": "local"
+      },
+      {
+        "domain_resolver": "local",
+        "path": "/dns-query",
+        "server": "doh.pub",
+        "server_port": 443,
+        "tag": "dns-0",
+        "tls": {
+          "enabled": true,
+          "server_name": "doh.pub"
+        },
+        "type": "https"
+      },
+      {
+        "domain_resolver": "local",
+        "path": "/dns-query",
+        "server": "dns.alidns.com",
+        "server_port": 443,
+        "tag": "dns-1",
+        "tls": {
+          "enabled": true,
+          "server_name": "dns.alidns.com"
+        },
+        "type": "https"
+      }
+    ],
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "listen_port": 9980,
+      "tag": "mixed-in",
+      "type": "mixed"
+    }
+  ],
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "outbounds": [
+    {
+      "password": "synthetic-test-only",
+      "server": "proxy.example.invalid",
+      "server_port": 443,
+      "tag": "proxy",
+      "tls": {
+        "enabled": true,
+        "insecure": false,
+        "server_name": "proxy.example.invalid"
+      },
+      "type": "hysteria2"
+    },
+    {
+      "tag": "direct",
+      "type": "direct"
+    }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "default_domain_resolver": "local",
+    "final": "proxy",
+    "rule_set": [
+      {
+        "download_detour": "direct",
+        "format": "binary",
+        "tag": "geosite-category-ads-all",
+        "type": "remote",
+        "update_interval": "24h",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs"
+      },
+      {
+        "download_detour": "direct",
+        "format": "binary",
+        "tag": "geosite-cn",
+        "type": "remote",
+        "update_interval": "24h",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs"
+      },
+      {
+        "download_detour": "direct",
+        "format": "binary",
+        "tag": "geoip-cn",
+        "type": "remote",
+        "update_interval": "24h",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+      }
+    ],
+    "rules": [
+      {
+        "action": "route",
+        "domain": [
+          "localhost"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "action": "route",
+        "domain_suffix": [
+          "lan"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "action": "route",
+        "domain_suffix": [
+          "home.arpa"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "action": "route",
+        "ip_cidr": [
+          "127.0.0.0/8"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "action": "route",
+        "ip_cidr": [
+          "10.0.0.0/8"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "action": "route",
+        "ip_cidr": [
+          "172.16.0.0/12"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "action": "route",
+        "ip_cidr": [
+          "192.168.0.0/16"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "action": "route",
+        "ip_cidr": [
+          "169.254.0.0/16"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "action": "route",
+        "ip_cidr": [
+          "100.64.0.0/10"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "action": "route",
+        "ip_cidr": [
+          "192.0.0.0/24"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "action": "route",
+        "ip_cidr": [
+          "198.18.0.0/15"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "action": "reject",
+        "rule_set": [
+          "geosite-category-ads-all"
+        ]
+      },
+      {
+        "action": "route",
+        "domain_suffix": [
+          "cn"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "action": "route",
+        "domain_suffix": [
+          "yunaq.com"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "action": "route",
+        "outbound": "direct",
+        "rule_set": [
+          "geosite-cn"
+        ]
+      },
+      {
+        "action": "route",
+        "outbound": "direct",
+        "rule_set": [
+          "geoip-cn"
+        ]
+      },
+      {
+        "action": "reject",
+        "network": "udp",
+        "port": [
+          443
+        ]
+      },
+      {
+        "action": "route",
+        "domain_suffix": [
+          "fastly.jsdelivr.net"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "action": "route",
+        "domain_suffix": [
+          "cdn.jsdelivr.net"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "action": "route",
+        "domain_suffix": [
+          "gh-proxy.com"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "action": "route",
+        "domain_suffix": [
+          "ghfast.top"
+        ],
+        "outbound": "direct"
+      }
+    ]
+  }
+}

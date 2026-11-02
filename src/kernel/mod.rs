@@ -536,21 +536,29 @@ pub fn select_proxy_kernel_preference_with(
 ) -> Result<KernelKind> {
     if let Some(kind) = preference.kernel() {
         if matches!(kind, KernelKind::Xray | KernelKind::Shoes) && !allow_xray {
-            anyhow::bail!("指定的 {} 暂不支持 TUN 模式；未启动其他内核，请选择兼容内核或 Auto", kind.display_name());
+            anyhow::bail!(
+                "指定的 {} 暂不支持 TUN 模式；未启动其他内核，请选择兼容内核或 Auto",
+                kind.display_name()
+            );
         }
         if !kind.supports_proxy_protocol(protocol) {
-            anyhow::bail!("指定的 {} 不支持协议 {protocol}；未启动其他内核", kind.display_name());
+            anyhow::bail!(
+                "指定的 {} 不支持协议 {protocol}；未启动其他内核",
+                kind.display_name()
+            );
         }
         if !available(kind) {
-            anyhow::bail!("未找到指定的 {} 可执行文件；未启动其他内核", kind.display_name());
+            anyhow::bail!(
+                "未找到指定的 {} 可执行文件；未启动其他内核",
+                kind.display_name()
+            );
         }
         return Ok(kind);
     }
 
     // Auto alone authorizes substitution. Apply mode restrictions to every candidate.
     select_proxy_kernel_with(protocol, |kind| {
-        (allow_xray || !matches!(kind, KernelKind::Xray | KernelKind::Shoes))
-            && available(kind)
+        (allow_xray || !matches!(kind, KernelKind::Xray | KernelKind::Shoes)) && available(kind)
     })
 }
 
@@ -575,23 +583,31 @@ pub fn select_proxy_kernel_preference_for_node_with(
     let incompatibility = |kind| match kind {
         KernelKind::Meow => is_node_incompatible_with_meow(node, has_tun),
         KernelKind::VpCore => is_node_incompatible_with_vpcore(node),
-        KernelKind::Xray | KernelKind::Shoes if has_tun || !allow_xray =>
-            Some("TUN 模式（此内核暂不支持）"),
+        KernelKind::Xray | KernelKind::Shoes if has_tun || !allow_xray => {
+            Some("TUN 模式（此内核暂不支持）")
+        }
         _ => None,
     };
     if let Some(kind) = preference.kernel() {
         if let Some(reason) = incompatibility(kind) {
-            anyhow::bail!("指定的 {} 与当前节点/模式不兼容：{reason}；未启动其他内核，请选择兼容内核或 Auto", kind.display_name());
+            anyhow::bail!(
+                "指定的 {} 与当前节点/模式不兼容：{reason}；未启动其他内核，请选择兼容内核或 Auto",
+                kind.display_name()
+            );
         }
         return select_proxy_kernel_preference_with(
-            &node.protocol, preference, allow_xray, available,
-        ).map(|kind| (kind, None));
+            &node.protocol,
+            preference,
+            allow_xray,
+            available,
+        )
+        .map(|kind| (kind, None));
     }
 
-    let kind = select_proxy_kernel_preference_with(
-        &node.protocol, preference, allow_xray,
-        |candidate| incompatibility(candidate).is_none() && available(candidate),
-    )?;
+    let kind =
+        select_proxy_kernel_preference_with(&node.protocol, preference, allow_xray, |candidate| {
+            incompatibility(candidate).is_none() && available(candidate)
+        })?;
     let reason = match preferred_proxy_kernel(&node.protocol) {
         Some(preferred) if preferred != kind => {
             let why = incompatibility(preferred).unwrap_or("未找到可执行文件");
@@ -600,9 +616,13 @@ pub fn select_proxy_kernel_preference_for_node_with(
         _ => "按协议与运行模式选择兼容的已安装内核".to_owned(),
     };
     // The manager appends this to status only after the actual engine starts.
-    Ok((kind, Some(format!(
-        "请求 Auto，实际内核 {}；选择原因：{reason}", kind.display_name()
-    ))))
+    Ok((
+        kind,
+        Some(format!(
+            "请求 Auto，实际内核 {}；选择原因：{reason}",
+            kind.display_name()
+        )),
+    ))
 }
 
 pub fn select_proxy_kernel_preference_for_node(
@@ -641,13 +661,19 @@ pub fn missing_kernel_for_node(
     available: impl Fn(KernelKind) -> bool,
 ) -> Option<KernelKind> {
     if select_proxy_kernel_preference_for_node_with(
-        node, preference, system_mode, has_tun, &available,
-    ).is_ok() {
+        node,
+        preference,
+        system_mode,
+        has_tun,
+        &available,
+    )
+    .is_ok()
+    {
         return None;
     }
-    select_proxy_kernel_preference_for_node_with(
-        node, preference, system_mode, has_tun, |_| true,
-    ).ok().map(|(kind, _)| kind)
+    select_proxy_kernel_preference_for_node_with(node, preference, system_mode, has_tun, |_| true)
+        .ok()
+        .map(|(kind, _)| kind)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -980,37 +1006,75 @@ mod tests {
 
     #[test]
     fn explicit_selection_never_substitutes_installed_alternative() {
-        for preference in [KernelPreference::VpCore, KernelPreference::Meow,
-            KernelPreference::Xray, KernelPreference::Shoes, KernelPreference::SingBox] {
-            assert!(select_proxy_kernel_preference_with("ss", preference, true,
-                |kind| kind == KernelKind::Mihomo).is_err());
+        for preference in [
+            KernelPreference::VpCore,
+            KernelPreference::Meow,
+            KernelPreference::Xray,
+            KernelPreference::Shoes,
+            KernelPreference::SingBox,
+        ] {
+            assert!(
+                select_proxy_kernel_preference_with("ss", preference, true, |kind| kind
+                    == KernelKind::Mihomo)
+                .is_err()
+            );
         }
         for preference in [KernelPreference::Xray, KernelPreference::Shoes] {
-            assert!(select_proxy_kernel_preference_with("ss", preference, false, |_| true).is_err());
+            assert!(
+                select_proxy_kernel_preference_with("ss", preference, false, |_| true).is_err()
+            );
         }
     }
 
     #[test]
     fn auto_keeps_fallback_but_excludes_non_tun_engines_in_tun_mode() {
-        assert_eq!(select_proxy_kernel_preference_with("ss", KernelPreference::Auto, true,
-            |kind| kind == KernelKind::SingBox).unwrap(), KernelKind::SingBox);
+        assert_eq!(
+            select_proxy_kernel_preference_with("ss", KernelPreference::Auto, true, |kind| kind
+                == KernelKind::SingBox)
+            .unwrap(),
+            KernelKind::SingBox
+        );
         for installed in [KernelKind::Xray, KernelKind::Shoes] {
-            assert!(select_proxy_kernel_preference_with("ss", KernelPreference::Auto, false,
-                |kind| kind == installed).is_err());
-            assert_eq!(select_proxy_kernel_preference_with("ss", KernelPreference::Auto, true,
-                |kind| kind == installed).unwrap(), installed);
+            assert!(select_proxy_kernel_preference_with(
+                "ss",
+                KernelPreference::Auto,
+                false,
+                |kind| kind == installed
+            )
+            .is_err());
+            assert_eq!(
+                select_proxy_kernel_preference_with(
+                    "ss",
+                    KernelPreference::Auto,
+                    true,
+                    |kind| kind == installed
+                )
+                .unwrap(),
+                installed
+            );
         }
     }
 
     #[test]
     fn preflight_auto_uses_the_same_mode_constraints_as_selection() {
         for installed in [KernelKind::Xray, KernelKind::Shoes] {
-            assert_eq!(missing_with("ss", KernelPreference::Auto, false, &[installed]),
-                Some(KernelKind::Mihomo));
-            assert_eq!(missing_with("ss", KernelPreference::Auto, true, &[installed]), None);
+            assert_eq!(
+                missing_with("ss", KernelPreference::Auto, false, &[installed]),
+                Some(KernelKind::Mihomo)
+            );
+            assert_eq!(
+                missing_with("ss", KernelPreference::Auto, true, &[installed]),
+                None
+            );
         }
-        assert_eq!(missing_with("quantum-tunnel", KernelPreference::Auto, false, &[]), None);
-        assert_eq!(missing_with("wireguard", KernelPreference::Xray, true, &[]), None);
+        assert_eq!(
+            missing_with("quantum-tunnel", KernelPreference::Auto, false, &[]),
+            None
+        );
+        assert_eq!(
+            missing_with("wireguard", KernelPreference::Xray, true, &[]),
+            None
+        );
     }
 
     /// 只装了 `installed` 里那几个内核时，预检应该说什么。
@@ -1408,54 +1472,99 @@ Use tags: with_gvisor
         assert!(error.to_string().contains("Meow"));
         assert!(error.to_string().contains("XHTTP"));
         let error = select_proxy_kernel_preference_for_node_with(
-            &xhttp_node, KernelPreference::VpCore, true, false, |_| true,
-        ).unwrap_err();
+            &xhttp_node,
+            KernelPreference::VpCore,
+            true,
+            false,
+            |_| true,
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("VP-Core"));
         let (actual, notice) = select_proxy_kernel_preference_for_node_with(
-            &xhttp_node, KernelPreference::Auto, true, false, available,
-        ).unwrap();
+            &xhttp_node,
+            KernelPreference::Auto,
+            true,
+            false,
+            available,
+        )
+        .unwrap();
         assert_eq!(actual, KernelKind::Mihomo);
         assert!(notice.unwrap().contains("Auto"));
         // Auto skips a known-incompatible VP-Core rather than failing before trying Shoes.
         let (actual, notice) = select_proxy_kernel_preference_for_node_with(
-            &xhttp_node, KernelPreference::Auto, true, false,
+            &xhttp_node,
+            KernelPreference::Auto,
+            true,
+            false,
             |kind| matches!(kind, KernelKind::VpCore | KernelKind::Shoes),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(actual, KernelKind::Shoes);
         let notice = notice.unwrap();
         assert!(notice.contains("Shoes"));
         assert!(notice.contains("Mihomo"));
         // Mixed system + TUN mode must not admit Xray/Shoes just because allow_xray is true.
         assert!(select_proxy_kernel_preference_for_node_with(
-            &xhttp_node, KernelPreference::Auto, true, true,
+            &xhttp_node,
+            KernelPreference::Auto,
+            true,
+            true,
             |kind| matches!(kind, KernelKind::Xray | KernelKind::Shoes),
-        ).is_err());
+        )
+        .is_err());
 
         // Preflight must not treat installed-but-incompatible engines as usable.
         for installed in [KernelKind::Meow, KernelKind::VpCore] {
-            assert_eq!(missing_kernel_for_node(
-                &xhttp_node, KernelPreference::Auto, true, false, |kind| kind == installed,
-            ), Some(KernelKind::Mihomo));
+            assert_eq!(
+                missing_kernel_for_node(&xhttp_node, KernelPreference::Auto, true, false, |kind| {
+                    kind == installed
+                },),
+                Some(KernelKind::Mihomo)
+            );
         }
-        assert_eq!(missing_kernel_for_node(
-            &xhttp_node, KernelPreference::Auto, true, false,
-            |kind| matches!(kind, KernelKind::VpCore | KernelKind::Shoes),
-        ), None);
-        assert_eq!(missing_kernel_for_node(
-            &xhttp_node, KernelPreference::Auto, true, true,
-            |kind| matches!(kind, KernelKind::Xray | KernelKind::Shoes),
-        ), Some(KernelKind::Mihomo));
-        for preference in [KernelPreference::Meow, KernelPreference::VpCore,
-            KernelPreference::Xray, KernelPreference::Shoes] {
-            assert_eq!(missing_kernel_for_node(
-                &xhttp_node, preference, true, true, |_| false,
-            ), None);
+        assert_eq!(
+            missing_kernel_for_node(
+                &xhttp_node,
+                KernelPreference::Auto,
+                true,
+                false,
+                |kind| matches!(kind, KernelKind::VpCore | KernelKind::Shoes),
+            ),
+            None
+        );
+        assert_eq!(
+            missing_kernel_for_node(
+                &xhttp_node,
+                KernelPreference::Auto,
+                true,
+                true,
+                |kind| matches!(kind, KernelKind::Xray | KernelKind::Shoes),
+            ),
+            Some(KernelKind::Mihomo)
+        );
+        for preference in [
+            KernelPreference::Meow,
+            KernelPreference::VpCore,
+            KernelPreference::Xray,
+            KernelPreference::Shoes,
+        ] {
+            assert_eq!(
+                missing_kernel_for_node(&xhttp_node, preference, true, true, |_| false,),
+                None
+            );
         }
         let mut unsupported_node = xhttp_node.clone();
         unsupported_node.protocol = "quantum-tunnel".to_owned();
-        assert_eq!(missing_kernel_for_node(
-            &unsupported_node, KernelPreference::Auto, true, false, |_| false,
-        ), None);
+        assert_eq!(
+            missing_kernel_for_node(
+                &unsupported_node,
+                KernelPreference::Auto,
+                true,
+                false,
+                |_| false,
+            ),
+            None
+        );
 
         // 3. Normal VMess node without xhttp or ECH in System mode should be fine with Meow
         let normal_node = Node {
@@ -1553,5 +1662,59 @@ Use tags: with_gvisor
         )
         .unwrap_err();
         assert!(error.to_string().contains("Shoes"));
+    }
+}
+
+impl From<KernelKind> for vp_client_core::compilation::KernelKind {
+    fn from(value: KernelKind) -> Self {
+        match value {
+            KernelKind::Mihomo => Self::Mihomo,
+            KernelKind::Xray => Self::Xray,
+            KernelKind::SingBox => Self::SingBox,
+            KernelKind::Shoes => Self::Shoes,
+            KernelKind::Meow => Self::Meow,
+            KernelKind::VpCore => Self::VpCore,
+        }
+    }
+}
+
+impl From<vp_client_core::compilation::KernelKind> for KernelKind {
+    fn from(value: vp_client_core::compilation::KernelKind) -> Self {
+        match value {
+            vp_client_core::compilation::KernelKind::Mihomo => Self::Mihomo,
+            vp_client_core::compilation::KernelKind::Xray => Self::Xray,
+            vp_client_core::compilation::KernelKind::SingBox => Self::SingBox,
+            vp_client_core::compilation::KernelKind::Shoes => Self::Shoes,
+            vp_client_core::compilation::KernelKind::Meow => Self::Meow,
+            vp_client_core::compilation::KernelKind::VpCore => Self::VpCore,
+        }
+    }
+}
+
+impl From<KernelPreference> for vp_client_core::compilation::KernelPreference {
+    fn from(value: KernelPreference) -> Self {
+        match value {
+            KernelPreference::Auto => Self::Auto,
+            KernelPreference::Mihomo => Self::Mihomo,
+            KernelPreference::SingBox => Self::SingBox,
+            KernelPreference::Xray => Self::Xray,
+            KernelPreference::Shoes => Self::Shoes,
+            KernelPreference::Meow => Self::Meow,
+            KernelPreference::VpCore => Self::VpCore,
+        }
+    }
+}
+
+impl From<vp_client_core::compilation::KernelPreference> for KernelPreference {
+    fn from(value: vp_client_core::compilation::KernelPreference) -> Self {
+        match value {
+            vp_client_core::compilation::KernelPreference::Auto => Self::Auto,
+            vp_client_core::compilation::KernelPreference::Mihomo => Self::Mihomo,
+            vp_client_core::compilation::KernelPreference::SingBox => Self::SingBox,
+            vp_client_core::compilation::KernelPreference::Xray => Self::Xray,
+            vp_client_core::compilation::KernelPreference::Shoes => Self::Shoes,
+            vp_client_core::compilation::KernelPreference::Meow => Self::Meow,
+            vp_client_core::compilation::KernelPreference::VpCore => Self::VpCore,
+        }
     }
 }

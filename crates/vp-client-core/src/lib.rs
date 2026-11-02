@@ -10,3 +10,7 @@ pub mod parser;
 
 pub mod geo;
 pub mod rule_io;
+
+pub mod compilation;
+pub mod export;
+pub mod hostutil;

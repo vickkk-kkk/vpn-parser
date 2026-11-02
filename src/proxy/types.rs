@@ -1,9 +1,9 @@
-use std::path::{Path, PathBuf};
 use crate::kernel::{KernelKind, KernelPreference};
 pub use crate::proxy::config::{DnsConfig, RoutingMode, TrafficRule, TunConfig};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::{Path, PathBuf};
 
 fn default_hop_ports() -> String {
     "20000-40000".to_string()
@@ -13,87 +13,9 @@ pub fn is_node_connectivity_failure(message: &str) -> bool {
     message.contains("节点连通性验证失败")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ProxyMode {
-    #[default]
-    System,
-    Tun,
-    /// 系统代理 + TUN 同时开：应用层走系统代理，网络层被 TUN 兜底接管。
-    Both,
-    /// 仅本地端口监听（系统代理与 TUN 同时关闭）
-    #[serde(alias = "none", alias = "port", alias = "manual")]
-    None,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProxyState {
-    Stopped,
-    Starting,
-    Running,
-    Degraded,
-    Stopping,
-    Failed,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum AutoRoutingStrategy {
-    #[default]
-    UrlTest,
-    Fallback,
-    LoadBalance,
-}
-
-impl ProxyMode {
-    /// TUN 是否参与（Tun 或 Both）。
-    pub fn has_tun(self) -> bool {
-        matches!(self, ProxyMode::Tun | ProxyMode::Both)
-    }
-    /// 系统代理是否参与（System 或 Both）。
-    pub fn has_system(self) -> bool {
-        matches!(self, ProxyMode::System | ProxyMode::Both)
-    }
-}
-
-impl AutoRoutingStrategy {
-    #[allow(dead_code)]
-    pub const ALL: [Self; 3] = [Self::UrlTest, Self::Fallback, Self::LoadBalance];
-
-    #[allow(dead_code)]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::UrlTest => "⚡ 最低延迟 (Auto)",
-            Self::Fallback => "🛡️ 故障转移 (Fallback)",
-            Self::LoadBalance => "⚖️ 负载均衡 (LoadBalance)",
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn description(self) -> &'static str {
-        match self {
-            Self::UrlTest => "周期并发探活，将流量自动调度至实时延迟最低的健康节点",
-            Self::Fallback => "按健康顺位连接，当前主节点失活时立即无感重定向至下一存活节点",
-            Self::LoadBalance => "多节点并发流量哈希调度，分散网络负载并大幅提升突发并发吞吐",
-        }
-    }
-}
-
-/// 一节点一端口：多端口独立入站映射规则
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PortMapping {
-    pub id: String,
-    pub port: u16,
-    pub node_id: String,
-    pub node_name: String,
-    #[serde(default = "default_port_mapping_enabled")]
-    pub enabled: bool,
-}
-
-fn default_port_mapping_enabled() -> bool {
-    true
-}
+pub use vp_client_core::compilation::options::{
+    AutoRoutingStrategy, PortMapping, ProxyMode, ProxyState,
+};
 
 // 不派生 Eq：url-test 候选里带着 Node（含浮点字段），只能做近似比较。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -341,8 +263,8 @@ pub fn write_elevated_proxy_config_file(options: &MihomoConfigOptions) -> Result
 
 /// 读取并立即安全清理提权交接配置文件。
 pub fn read_elevated_proxy_config_file(path: &Path) -> Result<MihomoConfigOptions> {
-    let bytes = std::fs::read(path)
-        .map_err(|error| anyhow!("读取提权代理配置文件失败: {error}"))?;
+    let bytes =
+        std::fs::read(path).map_err(|error| anyhow!("读取提权代理配置文件失败: {error}"))?;
     // 读取完毕后立即删除，避免临时配置文件留在磁盘上
     let _ = std::fs::remove_file(path);
     let options: MihomoConfigOptions = serde_json::from_slice(&bytes)
@@ -385,7 +307,8 @@ mod elevated_handoff_tests {
         source.url_test_size = 8;
         source.override_yaml = Some("rules:\n  - DOMAIN-SUFFIX,google.com,DIRECT".to_string());
 
-        let file_path = super::write_elevated_proxy_config_file(&source).expect("写配置临时文件失败");
+        let file_path =
+            super::write_elevated_proxy_config_file(&source).expect("写配置临时文件失败");
         assert!(file_path.exists(), "临时配置文件必须真实存在");
 
         let back = super::read_elevated_proxy_config_file(&file_path).expect("读配置临时文件失败");
@@ -437,3 +360,116 @@ mod elevated_handoff_tests {
     }
 }
 
+// Explicit conversion retains runtime-only fields which serde intentionally skips.
+impl From<&MihomoConfigOptions> for vp_client_core::compilation::options::MihomoConfigOptions {
+    fn from(value: &MihomoConfigOptions) -> Self {
+        Self {
+            mode: value.mode.clone(),
+            mixed_port: value.mixed_port.clone(),
+            controller_port: value.controller_port.clone(),
+            allow_lan: value.allow_lan.clone(),
+            tun: value.tun.clone(),
+            dns: value.dns.clone(),
+            routing_mode: value.routing_mode.clone(),
+            rules: value.rules.clone(),
+            kernel_preference: value.kernel_preference.into(),
+            controller_secret: value.controller_secret.clone(),
+            url_test: value.url_test.clone(),
+            auto_strategy: value.auto_strategy.clone(),
+            url_test_size: value.url_test_size.clone(),
+            terminal_proxy: value.terminal_proxy.clone(),
+            url_test_nodes: value.url_test_nodes.clone(),
+            smart_routing: value.smart_routing.clone(),
+            override_yaml: value.override_yaml.clone(),
+            subscription_rules_source_id: value.subscription_rules_source_id.clone(),
+            subscription_rules_yaml: value.subscription_rules_yaml.clone(),
+            subscription_groups_yaml: value.subscription_groups_yaml.clone(),
+            port_mappings: value.port_mappings.clone(),
+            port_mapping_nodes: value.port_mapping_nodes.clone(),
+            client_fingerprint: value.client_fingerprint.clone(),
+            block_webrtc: value.block_webrtc.clone(),
+            block_trackers: value.block_trackers.clone(),
+            udp_port_hopping: value.udp_port_hopping.clone(),
+            hop_ports: value.hop_ports.clone(),
+            selected_node_id: value.selected_node_id.clone(),
+            selected_node_name: value.selected_node_name.clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod shared_compilation_compatibility {
+    use super::*;
+
+    #[test]
+    fn shared_options_preserve_runtime_only_fields_and_unknown_node_data() {
+        let options = MihomoConfigOptions {
+            kernel_preference: KernelPreference::VpCore,
+            controller_secret: "synthetic-test-secret".into(),
+            url_test_nodes: vec![serde_json::json!({"type":"ss", "extension":{"future":[1,true]}})],
+            subscription_rules_yaml: Some("rules: [MATCH,DIRECT]".into()),
+            subscription_groups_yaml: Some("proxy-groups: []".into()),
+            port_mapping_nodes: vec![(
+                18080,
+                "synthetic-node".into(),
+                serde_json::json!({"future":{"enabled":true}}),
+            )],
+            ..Default::default()
+        };
+        let shared = vp_client_core::compilation::options::MihomoConfigOptions::from(&options);
+        assert_eq!(
+            shared.kernel_preference,
+            vp_client_core::compilation::KernelPreference::VpCore
+        );
+        assert_eq!(shared.controller_secret, options.controller_secret);
+        assert_eq!(shared.url_test_nodes, options.url_test_nodes);
+        assert_eq!(
+            shared.subscription_rules_yaml,
+            options.subscription_rules_yaml
+        );
+        assert_eq!(
+            shared.subscription_groups_yaml,
+            options.subscription_groups_yaml
+        );
+        assert_eq!(shared.port_mapping_nodes, options.port_mapping_nodes);
+        assert_eq!(
+            serde_json::to_value(&shared).unwrap(),
+            serde_json::to_value(&options).unwrap()
+        );
+    }
+
+    #[test]
+    fn shared_engine_identity_conversions_are_exhaustive_and_roundtrip() {
+        for kind in [
+            KernelKind::Mihomo,
+            KernelKind::Xray,
+            KernelKind::SingBox,
+            KernelKind::Shoes,
+            KernelKind::Meow,
+            KernelKind::VpCore,
+        ] {
+            let shared: vp_client_core::compilation::KernelKind = kind.into();
+            assert_eq!(KernelKind::from(shared), kind);
+            assert_eq!(
+                serde_json::to_value(shared).unwrap(),
+                serde_json::to_value(kind).unwrap()
+            );
+        }
+        for preference in [
+            KernelPreference::Auto,
+            KernelPreference::Mihomo,
+            KernelPreference::Xray,
+            KernelPreference::SingBox,
+            KernelPreference::Shoes,
+            KernelPreference::Meow,
+            KernelPreference::VpCore,
+        ] {
+            let shared: vp_client_core::compilation::KernelPreference = preference.into();
+            assert_eq!(KernelPreference::from(shared), preference);
+            assert_eq!(
+                serde_json::to_value(shared).unwrap(),
+                serde_json::to_value(preference).unwrap()
+            );
+        }
+    }
+}

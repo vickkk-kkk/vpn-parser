@@ -20,7 +20,7 @@ A native shell is not a working VPN implementation. Android requires a real VpnS
 The root workspace contains:
 
 - `vpn-parser`: the existing desktop binary.
-- `crates/vp-client-core`: shared configuration, node DTOs, subscription/protocol parsers and explicit-provider geo/rule parsing.
+- `crates/vp-client-core`: shared configuration, node DTOs, subscription/protocol parsers, explicit-provider geo/rule parsing and six-engine configuration compilers.
 - `crates/vp-client-mobile-ui`: shared egui configuration/import UI source and a separately testable pure import model.
 
 `apps/android` and `apps/ios` are explicitly excluded from the root workspace and declare independent native workspaces. The initial native shells received static checks only. The subsequent mobile import model now has a passing pure-model gate; native compilation, UI rendering and VPN operation remain unvalidated.
@@ -55,6 +55,14 @@ Rule parsing and geo category scanning use an explicit `GeoProvider`. Native cal
 
 Entropy, key generation and WARP registration remain desktop-side. Moving pure MASQUE parsing does not move those operations into core. Desktop public parser signatures are retained through compatibility adapters. The mobile import UI source now uses this parser through a paste/preview/confirm model. Native VPN integration remains unwired.
 
+### Shared six-engine configuration compilation
+
+The shared core now reuses the upstream IR and compilers for Mihomo, Sing-box, Xray, Shoes, Meow and VP-Core. `compilation::compile_configuration` is a checked API: it validates known capabilities, returns structured sanitized diagnostics, and rejects unsupported combinations or dangling `rule_sets` instead of silently falling back to another engine. A successful artifact means configuration generation, not engine availability, execution or VPN connectivity.
+
+Callers explicitly provide geo inventories, independent Shoes raw-asset inventory/opaque target paths, a probe URL and direct-mirror hosts. Core does not infer paths or fetch resource URLs. Desktop compatibility facades preserve the old compile-only output behavior and explicitly map runtime fields and engine identities. The stricter checked API does not retroactively change those legacy desktop semantics.
+
+Six captured original-desktop artifacts are included in the normal, non-ignored golden test, with fixture provenance under `crates/vp-client-core/tests/fixtures/compiler-baseline`. The extracted output matches all six byte-for-byte. Coverage is deliberately narrow: one synthetic default-options configuration per engine, explicit missing Geo inventories, fixed metadata and example-only credentials; Sing-box uses Hysteria2, the other engines Trojan. This does not cover every protocol, geo state, routing option, real engine or native platform. See [the compilation extraction notes](shared-compilation-extraction.md).
+
 ### Mobile import model and UI source
 
 The paste/preview/confirm model imports nodes and rules into memory only. Its host metadata source supplies real UUIDs and UTC timestamps; parsing does not fetch subscriptions, persist data or start a VPN. The egui import controls are wired in source, not yet rendering/native validated.
@@ -73,10 +81,11 @@ Structural checks and an ab_glyph software check of 63 glyphs passed. These esta
 |---|---|---|
 | Initial configuration extraction | Standalone copied core/facade workspace: 12 original + 6 compatibility tests passed using Rust 1.88 and normal Cargo `--locked --offline` | Historical scope, before the DTO/parser expansion; not a whole-root-workspace pass |
 | Expanded core including DTO/parser extraction | Standalone copied core plus actual config/model/parser facades: 24 tests passed (12 original + 6 config compatibility + 6 parser/DTO compatibility), zero failed/ignored/filtered, Rust 1.88 with normal Cargo `--locked --offline`; 23-package graph | Copied sources reverified against the current fork; this is not an integrated root-workspace, GUI or mobile gate |
-| Full shared parser, current actual workspace | 71/71 core tests passed: 54 unit + 17 integration (6 config compatibility, 6 parser/DTO compatibility, 5 full-parser extraction) | Core scope only; not GUI, native platforms or runtime |
-| Linux headless desktop compatibility | Root headless test harness compiled; eight exact pure regression tests passed | Not the complete root test suite; application main, GUI and engine runtime were not launched |
+| Full shared parser checkpoint | 71/71 core tests passed: 54 unit + 17 integration (6 config compatibility, 6 parser/DTO compatibility, 5 full-parser extraction) | Core scope only; not GUI, native platforms or runtime |
+| Current shared compilation/core gate | Actual workspace: 102 normal, non-ignored tests passed (76 unit + 26 integration), including six original-artifact golden comparisons | Fixed synthetic golden scope above; not GUI, engine runtime or all-platform validation |
+| Linux headless desktop compatibility | Current 213-package root headless graph compiled; eleven exact pure regression tests passed | Not the complete root test suite; application main, GUI and engine runtime were not launched |
 | Root dependency lock | Normal Cargo reconciliation for the shared parser; checkpoint hash above | Lock reconciliation alone is not cross-platform or runtime validation |
-| Mobile import/editor model | 15 pure tests passed (13 import + 2 editor) using `--no-default-features`; 67-package graph (66 core graph packages + mobile model), no GUI dependencies | Import UI source is wired, but no native compile, rendering, device lifecycle or VPN evidence |
+| Mobile import/editor model | 15 pure tests passed (13 import + 2 editor) using `--no-default-features`; no GUI dependencies; all fifteen also passed the actual-workspace rerun against the newly extracted compiler core | Import UI source is wired, but no native compile, rendering, device lifecycle or VPN evidence |
 | Development application-updater guard | Same 213-package headless graph compiled; eleven exact pure tests passed (prior eight + three guard tests) | GUI guard presentation is source-only, not compiled; main, native clients and runtime remain unvalidated |
 | Desktop runtime | Not launched as validation | No claim that main/GUI, engine execution or host networking has been tested |
 
@@ -89,12 +98,12 @@ Core has no build.rs, network client, engine downloader, shell command or implic
 - Network engine updates require release SHA-256 and size matches, then extract, execute a version probe, back up and replace engines. Local imports attempt to fetch release metadata and may skip SHA-256 when an official asset cannot be matched. Mirrors include ghfast.top and gh-proxy.com. A digest does not independently authenticate its metadata publisher.
 - The development-fork application binary updater is explicitly disabled by `app_update_policy.rs`, with guards before HTTP checks, installer downloads and install launch. This prevents the retained upstream release implementation from being used as the fork's binary update channel. Kernel updates and update-cache cleanup are unchanged. Upstream source synchronization is distinct from installing an upstream binary; neither an upstream tag nor a fork version establishes a release channel. Future distribution requires a separately reviewed fork release identity, artifact provenance and update policy. GUI presentation changes for this guard remain source-only and have not been compiled.
 - Linux package hooks refresh desktop/icon caches; RPM scripts do likewise. The OpenWrt tooling installer can install system packages, compile tools and copy libraries into system paths. Packaging scripts are not validation commands.
-- The remaining desktop models reference db identifiers, proxy rules and kernel source preferences. Profile/proxy types use desktop data-root lookup; config compilers consult geo files and other runtime helpers. Moving every module into lib.rs would expose desktop side effects rather than yield a portable core.
+- The remaining desktop models reference db identifiers, proxy rules and kernel source preferences. Profile/proxy types use desktop data-root lookup; desktop compiler adapters consult geo files and supply explicit context to the shared compilers. Moving every module into lib.rs would expose desktop side effects rather than yield a portable core.
 
 ## Next extraction boundaries
 
 1. **Parser consumers:** validate the now-wired mobile import UI on real rendering/native targets. Its nodes/rules remain memory-only; persistence and native VPN application are separate future integrations. Preserve diagnostics and protocol fields; never report a VPN connection from a successful import.
-2. **Rules/config compilation:** reuse upstream IR rather than introduce a second compiler. Inject geo inventories and connectivity-test settings; separate pure compiler inputs from file lookup and executable discovery. Preserve golden outputs per backend.
+2. **Rules/config compilation:** extend the six-engine golden matrix beyond one synthetic configuration per engine, and integrate checked compile previews without confusing artifact generation with engine validation or VPN readiness.
 3. **Data layer:** accept explicit storage roots and repository interfaces. Place SQLite in a separate, feature-gated data adapter rather than the always-linked pure core. Keep profile file import/export explicit.
 4. **Native adapters:** implement lifecycle/capability contracts with honest unsupported states, cancellation and typed failures. Never route a mobile build through the desktop platform fallback to Linux executable assets.
 5. **Desktop adapter:** retain egui and the binary; isolate process/system-proxy responsibilities behind a desktop adapter before linking native clients.

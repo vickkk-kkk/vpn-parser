@@ -1,0 +1,38 @@
+{
+  "compiler_baseline_commit": "8d51b8484a0b64e1011b3a38d83b83a2fb348ee0",
+  "capture_checkout_commit": "00733289c6a43bd6fd093ef6b75c2a288f4fb872",
+  "capture_test": "proxy::tests::capture_shared_compilation_baseline",
+  "capture_source_sha256": {
+    "src/geo.rs": "d5169e121d666abf46c82ada46c0b1f1459cf78b7f8971298e90754def05f445",
+    "src/proxy/tests.rs": "65fcdc89867e3c9d5e5d27f9261f6c5afe28573596a44809472abdbe54e5d8d8"
+  },
+  "captured_artifacts": {
+    "vpcore.txt": {
+      "size": 3082,
+      "sha256": "781293be42881022b28e797b7d41e8c9022640ce33200a34553b7917123dc5c4"
+    },
+    "meow.txt": {
+      "size": 4051,
+      "sha256": "9d637d467166e5ddce1be9a76cb3f2683c2519a31a17b9ae4b3c380890f8a4f0"
+    },
+    "xray.txt": {
+      "size": 3996,
+      "sha256": "17ec9209499f5f0bab9a0163a12084bb8ae05171377696cd0ac0ed499d1d47d7"
+    },
+    "mihomo.txt": {
+      "size": 4090,
+      "sha256": "24a249e409606c3d85b5582d5e87c97cea0d62087b9e4020279597050c025be1"
+    },
+    "sing_box.txt": {
+      "size": 5003,
+      "sha256": "edf86f5d591474cc9e3a6559de85500885825497bafe7eb6dca8dd581fda3d86"
+    },
+    "shoes.txt": {
+      "size": 2976,
+      "sha256": "7c68f634625828324ab93f6d48df05858b20f5b91e471ad5ee7a7bc6e3087f53"
+    }
+  },
+  "inventory": "Missing GeoSite and GeoIP; legacy two-letter GeoIP bypass retained; Shoes has no asset references",
+  "scope": "One fixed synthetic default-options fixture per engine; full serialized artifacts; no engine execution, network fetching or native VPN validation",
+  "comparison": "Actual extracted core comparison passed for all six captured artifacts before promotion"
+}
