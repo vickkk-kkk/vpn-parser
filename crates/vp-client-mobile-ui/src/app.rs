@@ -1,5 +1,6 @@
 use crate::{
     editor::Editor,
+    fonts,
     import::{display_text, ImportState},
     theme,
 };
@@ -38,6 +39,7 @@ impl MobileApp {
         platform: &'static str,
         metadata: Box<dyn FnMut() -> NodeMetadata>,
     ) -> Self {
+        fonts::install(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx, theme::DEFAULT_THEME, false);
         cc.egui_ctx.style_mut(|style| {
             style.spacing.interact_size.y = 48.0;
@@ -337,6 +339,7 @@ impl eframe::App for MobileApp {
                                 }
                             });
                         }
+                        fonts::license_details(ui);
                         ui.label("Upstream: mateo-ki/vpn-parser · MIT license");
                     }
                 }

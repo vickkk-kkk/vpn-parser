@@ -5,6 +5,8 @@
 mod app;
 mod editor;
 #[cfg(all(feature = "rendering", not(test)))]
+mod fonts;
+#[cfg(all(feature = "rendering", not(test)))]
 #[path = "../../../src/gui/theme.rs"]
 #[allow(dead_code)]
 mod theme;

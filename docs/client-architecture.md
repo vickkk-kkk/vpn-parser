@@ -61,6 +61,12 @@ The paste/preview/confirm model imports nodes and rules into memory only. Its ho
 
 The `rendering` feature remains enabled by default, with eframe/once_cell optional so `--no-default-features` can test the pure import/editor model without GUI dependencies. The existing `cfg(not(test))` exclusion for the desktop theme/app prevents those components from being compiled by unit tests: passing the model gate does not prove GUI compilation. The mobile-model gate left the root Cargo.lock checkpoint hash above unchanged.
 
+### Bundled Chinese font
+
+The rendering-source integration embeds `assets/fonts/PrivateVPSansSC-Regular.ttf` and installs it as a fallback for egui proportional and monospace families while retaining default fonts. The font is a full-coverage static weight-400 instance derived from Noto Sans SC and renamed PrivateVP Sans SC; it is not a subset. `assets/fonts/OFL.txt` carries the complete SIL Open Font License 1.1, alongside provenance, verification metadata and the reproducible derivation recipe. The source About panel includes the full license.
+
+Structural checks and an ab_glyph software check of 63 glyphs passed. These establish font-data/outline compatibility, not egui layout, screenshots, native compilation or device rendering. Coverage is Simplified-Chinese-oriented, not all CJK or emoji; locale-specific Japanese forms and every possible glyph are not guaranteed. The rendering integration remains source-level work, distinct from the passing no-GUI model gate.
+
 ## Verification status
 
 | Scope | Evidence | Limit |

@@ -52,11 +52,22 @@ host build of target-gated mobile entries as an Android/iOS compilation.
 
 ## Font and device gates
 
-Current eframe default fonts do not establish Chinese glyph coverage. This tree
-has no packaged CJK font. Desktop font discovery in main.rs must not be invoked
-on mobile. A future audited licensed font asset or native font-bytes adapter is
-needed, followed by Chinese name/input, keyboard, safe-area, accessibility and
-narrow-screen checks. No font was downloaded by this change.
+The rendering-only `fonts` module embeds `assets/fonts/PrivateVPSansSC-Regular.ttf`
+and its complete `OFL.txt`, installing a fallback once per MobileApp creation in
+both proportional and monospace families. Default egui fonts stay first. No
+font loading runs from desktop main.rs, the filesystem or network. Builds with
+`--no-default-features` do not compile the font module or embed these assets.
+
+The bundled OFL derivative is named PrivateVP Sans SC Regular (static weight
+400, no subsetting). About exposes the complete license/copyright text and a
+coverage notice. `assets/fonts/provenance.json` and `derive_font.py` record the
+source identity and derivation. Simplified-Chinese coverage is not all CJK or
+emoji coverage and does not guarantee locale-specific Japanese forms. English
+UI text remains unchanged; imported Chinese names use fallback glyphs.
+
+Bundling and registering a font does not establish native UI rendering. The
+separate actual glyph/layout preflight, then Android/iOS Chinese name/input,
+keyboard, safe-area, accessibility and narrow-screen checks remain required.
 
 Android uses NativeActivity/glow; iOS uses wgpu/Metal in its own Cargo workspace.
 Their exact host chrono/uuid versions match the reviewed root lock, but each
