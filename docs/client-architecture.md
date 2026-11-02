@@ -69,6 +69,14 @@ The paste/preview/confirm model imports nodes and rules into memory only. Its ho
 
 The `rendering` feature remains enabled by default, with eframe/once_cell optional so `--no-default-features` can test the pure import/editor model without GUI dependencies. The existing `cfg(not(test))` exclusion for the desktop theme/app prevents those components from being compiled by unit tests: passing the model gate does not prove GUI compilation. The mobile-model gate left the root Cargo.lock checkpoint hash above unchanged.
 
+### Checked mobile configuration preview
+
+The preview source requires an explicit selection among six engines and an imported node selected by stable ID. It uses the checked core compiler; failures never substitute another engine or change routing mode. Current DNS draft text is validated on Compile rather than silently reusing an older valid configuration. Both geo providers explicitly report missing inventory, and no engine asset paths are supplied.
+
+A successful result is a non-runnable template, not a configured mobile VPN: native engines, packet flow, asset placement and controller security are not provisioned. The model performs no network access, export, persistence or engine execution. Default summaries hide the artifact and credentials; a separate reveal action warns that credentials become visible. Navigation hides the revealed text and relevant edits invalidate the artifact, but native background/screenshot privacy has not been validated. Hiding or clearing is not secure memory erasure.
+
+The current actual-workspace pure-model gate passed all 27 tests (12 preview plus 15 existing import/editor tests), with the same 67-package no-GUI graph and unchanged root Cargo.lock hash. Core 102 and headless root 11 results remain the preceding unchanged-code checkpoints. The next meaningful gate is real GUI/native compilation and validation, not additional untested UI behavior.
+
 ### Bundled Chinese font
 
 The rendering-source integration embeds `assets/fonts/PrivateVPSansSC-Regular.ttf` and installs it as a fallback for egui proportional and monospace families while retaining default fonts. The font is a full-coverage static weight-400 instance derived from Noto Sans SC and renamed PrivateVP Sans SC; it is not a subset. `assets/fonts/OFL.txt` carries the complete SIL Open Font License 1.1, alongside provenance, verification metadata and the reproducible derivation recipe. The source About panel includes the full license.
@@ -85,7 +93,7 @@ Structural checks and an ab_glyph software check of 63 glyphs passed. These esta
 | Current shared compilation/core gate | Actual workspace: 102 normal, non-ignored tests passed (76 unit + 26 integration), including six original-artifact golden comparisons | Fixed synthetic golden scope above; not GUI, engine runtime or all-platform validation |
 | Linux headless desktop compatibility | Current 213-package root headless graph compiled; eleven exact pure regression tests passed | Not the complete root test suite; application main, GUI and engine runtime were not launched |
 | Root dependency lock | Normal Cargo reconciliation for the shared parser; checkpoint hash above | Lock reconciliation alone is not cross-platform or runtime validation |
-| Mobile import/editor model | 15 pure tests passed (13 import + 2 editor) using `--no-default-features`; no GUI dependencies; all fifteen also passed the actual-workspace rerun against the newly extracted compiler core | Import UI source is wired, but no native compile, rendering, device lifecycle or VPN evidence |
+| Mobile import/editor/preview model | Actual workspace: 27/27 ordinary pure-model tests passed (12 preview + 15 prior import/editor) using `--no-default-features`; unchanged 67-package graph, no GUI dependencies; source and test executable verified | UI source is wired, but no native compile, rendering, device lifecycle or VPN evidence |
 | Development application-updater guard | Same 213-package headless graph compiled; eleven exact pure tests passed (prior eight + three guard tests) | GUI guard presentation is source-only, not compiled; main, native clients and runtime remain unvalidated |
 | Desktop runtime | Not launched as validation | No claim that main/GUI, engine execution or host networking has been tested |
 

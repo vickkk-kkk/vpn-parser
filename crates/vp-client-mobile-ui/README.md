@@ -72,3 +72,43 @@ keyboard, safe-area, accessibility and narrow-screen checks remain required.
 Android uses NativeActivity/glow; iOS uses wgpu/Metal in its own Cargo workspace.
 Their exact host chrono/uuid versions match the reviewed root lock, but each
 native dependency graph/lock and its SDK build still require independent review.
+
+## Checked engine configuration preview
+
+Config requires an explicit choice of Mihomo, Sing-box, Xray, Shoes, Meow or
+VP-Core and an imported node selected by stable ID. It calls the shared
+`compile_configuration` entrypoint, never backend compilation directly. An error
+never selects another engine or changes routing mode. This integration requires
+the shared six-engine compiler extraction to be committed first.
+
+Options are constructed explicitly: no system proxy, TUN, LAN exposure, terminal
+proxy, automatic routing groups, overrides or port mappings. Existing local
+port numbers are template fields only; no listener starts. Controller identity
+is not provisioned. The empty connectivity-test URL is deliberate because
+URL-test is disabled; tests assert no probing group or empty probe URL appears.
+These assertions are not engine acceptance or runtime-network tests.
+
+Current DNS draft text is validated on Compile, not silently replaced by an
+older valid configuration. Manual rules precede imported rules; exact duplicates
+are removed without changing order. Rule mode retains upstream presets, so
+Shoes' unsupported QUIC rules remain errors. Global/Direct modes leave custom
+rule drafts inactive; the UI states that explicitly. No routing mode is changed
+to manufacture a successful preview.
+
+Both geo interfaces explicitly report missing inventory, and the engine asset
+provider supplies no paths. It does not use the legacy two-letter GeoIP bypass.
+Warnings/errors are retained. Successful serialization can still describe an
+incomplete template with engine-specific defaults: no native engine, packet
+flow, asset layout or controller security is configured. Never run it as a
+working mobile VPN configuration.
+
+Default summaries omit artifacts, node credentials and raw configuration.
+The separate reveal button explicitly warns that credentials become visible.
+Navigation hides revealed text; rule/DNS/import edits invalidate the artifact.
+No file export, clipboard action, network, persistence or engine execution is
+implemented. Clearing/hiding data is not secure memory erasure. Preview state
+intentionally does not implement Debug because it owns secret-bearing artifacts.
+
+Pure preview model tests are separate from native compilation and rendering.
+The GUI has not been accepted on a device, and the additional Config navigation
+item still needs narrow-screen/touch/accessibility review.

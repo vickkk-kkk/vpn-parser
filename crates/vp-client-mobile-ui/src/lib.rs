@@ -15,3 +15,6 @@ pub use app::MobileApp;
 
 /// Pure paste/preview/confirm model; available without rendering dependencies.
 pub mod import;
+
+/// Pure checked configuration-preview state; never starts an engine.
+pub mod preview;
