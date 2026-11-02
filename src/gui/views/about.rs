@@ -6,7 +6,8 @@ use crate::gui::widgets::{card_frame, fold_title, icon_tile, pill, primary_btn, 
 use crate::gui::VpnApp;
 use eframe::egui::{self, CornerRadius, Frame, Margin, ProgressBar, RichText, Stroke, Ui, Vec2};
 
-const REPO_URL: &str = "https://github.com/mateo-ki/vpn-parser";
+const REPO_URL: &str = "https://github.com/vickkk-kkk/vpn-parser";
+const UPSTREAM_SOURCE_URL: &str = "https://github.com/mateo-ki/vpn-parser";
 const RELEASES_URL: &str = "https://github.com/mateo-ki/vpn-parser/releases";
 /// 关于页顶部那句介绍。刻意写"这程序干四件事"而不是形容词：这一页是排障时才来的地方。
 const TAGLINE: &str = "采集订阅 · 解析节点 · 本地跑代理 · 把代理质量测出来给你看。";
@@ -119,6 +120,17 @@ impl VpnApp {
     }
 
     fn ui_about_update(&mut self, ui: &mut Ui) {
+        if !app_update::policy::BINARY_UPDATES_ENABLED {
+            card_frame().show(ui, |ui| {
+                ui.label(RichText::new("Fork 开发版本 · 应用更新已禁用").strong());
+                ui.label(app_update::policy::DISABLED_REASON);
+                ui.label("源码同步需单独审查；不会安装上游 Release，也未配置 fork 发布通道。");
+                ui.hyperlink_to("上游源码与归属（不是本 fork 的安装更新）", UPSTREAM_SOURCE_URL);
+                ui.add_space(8.0);
+                ui_local_paths(ui);
+            });
+            return;
+        }
         card_frame().show(ui, |ui| {
             let (title, title_color, tile_color) = match &self.app_release {
                 Some(info) if info.update_available => (
@@ -443,35 +455,7 @@ impl VpnApp {
                     }
                 });
 
-            let dirs: [(&str, Option<std::path::PathBuf>); 4] = [
-                ("程序目录", current_exe_dir()),
-                ("数据目录", data_dir()),
-                ("内核目录", Some(crate::kernel::managed_kernel_root())),
-                ("更新包暂存", Some(app_update::installer_cache_dir())),
-            ];
-            egui::CollapsingHeader::new(fold_title("本机路径"))
-                .id_salt("about:paths")
-                .default_open(false)
-                .show_background(false)
-                .show(ui, |ui| {
-                    for (label, dir) in dirs {
-                        match dir {
-                            Some(path) => {
-                                if kv_row(ui, label, &path.display().to_string(), Some("打开")) {
-                                    open_in_file_manager(&path);
-                                }
-                            }
-                            None => {
-                                kv_row(ui, label, "未知", None);
-                            }
-                        }
-                    }
-                    ui.label(
-                        RichText::new("「更新包暂存」里的安装包装完可以自己删。")
-                            .size(11.0)
-                            .color(theme::muted()),
-                    );
-                });
+            ui_local_paths(ui);
             ui.add_space(8.0);
             // 默认关：开着等于同意装"没跑稳、可能改数据结构"的包，所以不替人打开。
             let mut insider = self.edit_insider_channel;
@@ -550,6 +534,10 @@ impl VpnApp {
 
     /// 启动后自己查一次更新，只为点亮侧栏的↑。不占进度条、不动状态栏。
     pub(crate) fn check_app_update_quiet(&mut self) {
+        if !app_update::policy::BINARY_UPDATES_ENABLED {
+            self.app_update_due = None;
+            return;
+        }
         let tx = self.tx.clone();
         let proxy = self.app_update_proxy();
         // 后台这次按**已保存**的通道查：编辑态可能正被用户改到一半。
@@ -570,6 +558,10 @@ impl VpnApp {
     /// 自动检查的节奏：**每 6 小时一次**。留足余量给手动检查和内核更新。
     /// 用户已经在关于页手动查过（或正在查）就跳过这一次。
     pub(crate) fn maybe_check_app_update(&mut self) {
+        if !app_update::policy::BINARY_UPDATES_ENABLED {
+            self.app_update_due = None;
+            return;
+        }
         let Some(due) = self.app_update_due else {
             return;
         };
@@ -587,6 +579,10 @@ impl VpnApp {
     }
 
     pub(crate) fn check_app_update(&mut self) {
+        if let Err(reason) = app_update::policy::ensure_binary_updates_enabled() {
+            self.status = reason.into();
+            return;
+        }
         let tx = self.tx.clone();
         let proxy = self.app_update_proxy();
         let insider = self.edit_insider_channel;
@@ -615,6 +611,10 @@ impl VpnApp {
     }
 
     pub(crate) fn download_app_update(&mut self) {
+        if let Err(reason) = app_update::policy::ensure_binary_updates_enabled() {
+            self.status = reason.into();
+            return;
+        }
         let Some(info) = self.app_release.clone() else {
             self.status = "先检查一次更新".into();
             return;
@@ -646,6 +646,10 @@ impl VpnApp {
     }
 
     pub(crate) fn install_app_update(&mut self, path: &std::path::Path) {
+        if let Err(reason) = app_update::policy::ensure_binary_updates_enabled() {
+            self.status = reason.into();
+            return;
+        }
         match app_update::launch_installer(path) {
             Ok(app_update::Handoff::WizardLaunched) => {
                 self.status = format!("安装向导已启动：{}", path.display());
@@ -682,6 +686,10 @@ impl VpnApp {
     }
 
     pub(crate) fn fetch_available_releases(&mut self) {
+        if let Err(reason) = app_update::policy::ensure_binary_updates_enabled() {
+            self.status = reason.into();
+            return;
+        }
         let tx = self.tx.clone();
         let proxy = self.app_update_proxy();
         self.fetching_releases = true;
@@ -699,6 +707,10 @@ impl VpnApp {
     }
 
     pub(crate) fn select_release_version(&mut self, tag: String) {
+        if let Err(reason) = app_update::policy::ensure_binary_updates_enabled() {
+            self.status = reason.into();
+            return;
+        }
         if let Some(item) = self.available_releases.iter().find(|r| r.tag == tag).cloned() {
             let current = app_update::current_version();
             let info = item.to_release_info(current);
@@ -857,6 +869,39 @@ fn kv_row(ui: &mut Ui, label: &str, value: &str, action: Option<&str>) -> bool {
     }
     ui.advance_cursor_after_rect(row);
     clicked
+}
+
+// Troubleshooting paths remain available even when binary updates are disabled.
+fn ui_local_paths(ui: &mut Ui) {
+    let dirs: [(&str, Option<std::path::PathBuf>); 4] = [
+        ("程序目录", current_exe_dir()),
+        ("数据目录", data_dir()),
+        ("内核目录", Some(crate::kernel::managed_kernel_root())),
+        ("更新包暂存", Some(app_update::installer_cache_dir())),
+    ];
+    egui::CollapsingHeader::new(fold_title("本机路径"))
+        .id_salt("about:paths")
+        .default_open(false)
+        .show_background(false)
+        .show(ui, |ui| {
+            for (label, dir) in dirs {
+                match dir {
+                    Some(path) => {
+                        if kv_row(ui, label, &path.display().to_string(), Some("打开")) {
+                            open_in_file_manager(&path);
+                        }
+                    }
+                    None => {
+                        kv_row(ui, label, "未知", None);
+                    }
+                }
+            }
+            ui.label(
+                RichText::new("「更新包暂存」里的安装包装完可以自己删。")
+                    .size(11.0)
+                    .color(theme::muted()),
+            );
+        });
 }
 
 fn current_exe_dir() -> Option<std::path::PathBuf> {

@@ -4,6 +4,9 @@
 //! 应用自己不行 —— `vpn-parser.exe` 正在运行，Windows 不允许覆盖它。所以这里只负责
 //! "把安装包取回来并证明它没被改过"，落地交给 Inno 向导（它会先 taskkill 本进程再装）。
 
+#[path = "app_update_policy.rs"]
+pub(crate) mod policy;
+
 use anyhow::{bail, Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -13,6 +16,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 /// 安装包发布在这儿，由 `.github/workflows/release.yml`（Windows）和
 /// `.github/workflows/build-linux.yml`（deb / rpm）用同一个 tag 打出来。
+// Retained upstream implementation identity, NOT an approved fork release channel.
+// All binary-update adapters must pass the development policy before side effects.
 pub const REPOSITORY: &str = "mateo-ki/vpn-parser";
 
 /// 一种平台的安装包形态。资产名规则各不同，所以"挑哪个包"和"怎么装"都得跟着它走。
@@ -588,6 +593,7 @@ pub async fn check(
     current: &str,
     channel: UpdateChannel,
 ) -> Result<AppReleaseInfo> {
+    policy::ensure_binary_updates_enabled().map_err(anyhow::Error::msg)?;
     let url = match channel {
         UpdateChannel::Stable => {
             format!("https://api.github.com/repos/{REPOSITORY}/releases/latest")
@@ -707,6 +713,7 @@ pub async fn list_releases(
     current: &str,
     per_page: usize,
 ) -> Result<Vec<ReleaseItem>> {
+    policy::ensure_binary_updates_enabled().map_err(anyhow::Error::msg)?;
     let per_page = per_page.clamp(1, 100);
     let url = format!("https://api.github.com/repos/{REPOSITORY}/releases?per_page={per_page}");
     let mut failures = Vec::new();
@@ -817,6 +824,7 @@ pub async fn fetch_releases_from_atom(
     app_proxy: Option<&str>,
     current: &str,
 ) -> Result<Vec<ReleaseItem>> {
+    policy::ensure_binary_updates_enabled().map_err(anyhow::Error::msg)?;
     let url = format!("https://github.com/{REPOSITORY}/releases.atom");
     let mut failures = Vec::new();
     for transport in transports(app_proxy)? {
@@ -1055,6 +1063,7 @@ pub async fn download<F>(
 where
     F: Fn(AppUpdateProgress) + Send + Sync,
 {
+    policy::ensure_binary_updates_enabled().map_err(anyhow::Error::msg)?;
     let asset = info
         .asset
         .clone()
@@ -1254,6 +1263,7 @@ pub enum Handoff {
 }
 
 pub fn launch_installer(path: &Path) -> Result<Handoff> {
+    policy::ensure_binary_updates_enabled().map_err(anyhow::Error::msg)?;
     if !path.is_file() {
         bail!("安装包不在了: {}", path.display());
     }
@@ -1747,12 +1757,51 @@ ID-LIKE=\"debian\"
     }
 
     #[test]
-    fn cancellation_is_checked_before_touching_the_network() {
-        let cancelled = AtomicBool::new(true);
-        assert!(cancelled.load(Ordering::Relaxed));
-        // 安装程序不存在时不许启动（否则会拉起一个报错对话框）
-        let missing = installer_cache_dir().join("does-not-exist-setup.exe");
-        assert!(launch_installer(&missing).is_err());
+    fn development_policy_blocks_installer_before_path_access() {
+        assert_eq!(
+            launch_installer(Path::new("unused-development-installer.exe"))
+                .unwrap_err()
+                .to_string(),
+            policy::DISABLED_REASON
+        );
+    }
+
+    #[tokio::test]
+    async fn development_policy_blocks_all_release_and_download_adapters() {
+        // Invalid proxy provides an additional no-network boundary if a guard regresses.
+        let proxy = Some("://invalid-proxy");
+        for channel in [UpdateChannel::Stable, UpdateChannel::Insider] {
+            assert_eq!(
+                check(proxy, "0.0.0", channel).await.unwrap_err().to_string(),
+                policy::DISABLED_REASON
+            );
+        }
+        assert_eq!(
+            list_releases(proxy, "0.0.0", 30).await.unwrap_err().to_string(),
+            policy::DISABLED_REASON
+        );
+        assert_eq!(
+            fetch_releases_from_atom(proxy, "0.0.0").await.unwrap_err().to_string(),
+            policy::DISABLED_REASON
+        );
+        // No asset means a missing policy guard still cannot download or create a cache.
+        let info = AppReleaseInfo {
+            tag: "v99.0.0".into(),
+            current_version: "0.0.0".into(),
+            update_available: true,
+            asset: None,
+            hash_index_url: None,
+            prerelease: false,
+            message: String::new(),
+            body: None,
+        };
+        assert_eq!(
+            download(&info, proxy, &AtomicBool::new(false), &|_| panic!("disabled update emitted progress"))
+                .await
+                .unwrap_err()
+                .to_string(),
+            policy::DISABLED_REASON
+        );
     }
 
     /// 下载好的安装包放在**数据根目录下**（用户 2026-10-14 指定要看得见、不进 `%TEMP%`），

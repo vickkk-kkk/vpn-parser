@@ -624,7 +624,8 @@ impl VpnApp {
             app_update_progress: None,
             app_update_busy: false,
             app_update_checked_at: None,
-            app_update_due: Some(std::time::Instant::now() + std::time::Duration::from_secs(1)),
+            app_update_due: crate::app_update::policy::BINARY_UPDATES_ENABLED
+                .then(|| std::time::Instant::now() + std::time::Duration::from_secs(1)),
             app_update_quiet: false,
             app_installer_path: None,
             app_update_cancel: Arc::new(AtomicBool::new(false)),

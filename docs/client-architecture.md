@@ -29,7 +29,7 @@ The root Cargo.lock was reconciled using normal Cargo processing for the shared-
 
 `4f0c63aab9c029b50ed9236bba135098680289980d69e2b2121417c598a5dc74`
 
-The current extraction has passed the actual-workspace core test gate and a Linux headless desktop compatibility compile with eight exact pure tests. These are distinct scoped results, not a GUI, whole-suite, native-platform or VPN-runtime pass.
+The shared-parser extraction has passed the actual-workspace core test gate and a Linux headless desktop compatibility compile with eight exact pure tests. A subsequent development-updater guard checkpoint compiled the same 213-package headless graph and passed eleven exact pure tests (the prior eight plus three guard tests). These are distinct scoped results, not a GUI, whole-suite, native-platform or VPN-runtime pass.
 
 ## Implemented extractions
 
@@ -65,6 +65,7 @@ Entropy, key generation and WARP registration remain desktop-side. Moving pure M
 | Linux headless desktop compatibility | Root headless test harness compiled; eight exact pure regression tests passed | Not the complete root test suite; application main, GUI and engine runtime were not launched |
 | Root dependency lock | Normal Cargo reconciliation for the shared parser; checkpoint hash above | Lock reconciliation alone is not cross-platform or runtime validation |
 | Mobile source | 21 files, static checks only | No native compile, rendering, device lifecycle or VPN evidence |
+| Development application-updater guard | Same 213-package headless graph compiled; eleven exact pure tests passed (prior eight + three guard tests) | GUI guard presentation is source-only, not compiled; main, native clients and runtime remain unvalidated |
 | Desktop runtime | Not launched as validation | No claim that main/GUI, engine execution or host networking has been tested |
 
 Core has no build.rs, network client, engine downloader, shell command or implicit data-root lookup. Its test dependencies still require normal dependency/build-script review. Reviewed serde/serde_core/proc-macro2/quote/zmij build scripts perform compiler probes and OUT_DIR operations. The standalone core gates subsequently acquired and checked their exact missing dependency sources. These focused checks are not a complete audit of all desktop or mobile transitive dependencies.
@@ -74,7 +75,7 @@ Core has no build.rs, network client, engine downloader, shell command or implic
 - Root `build.rs` writes `target/cargo-version.iss`; on Windows it invokes the resource compiler through embed-resource. It does not itself download engines. `.cargo/config.toml` sets the target directory.
 - Ordinary startup in `src/main.rs` cleans orphan engine processes, heals system proxy/DNS, probes installed engines by running version commands, opens/migrates SQLite, scrubs records and automatically provisions missing GeoIP/GeoSite data. Startup is not a side-effect-free smoke test.
 - Network engine updates require release SHA-256 and size matches, then extract, execute a version probe, back up and replace engines. Local imports attempt to fetch release metadata and may skip SHA-256 when an official asset cannot be matched. Mirrors include ghfast.top and gh-proxy.com. A digest does not independently authenticate its metadata publisher.
-- `src/app_update.rs` targets upstream releases and downloads installers; fork distribution needs a separately reviewed update identity.
+- The development-fork application binary updater is explicitly disabled by `app_update_policy.rs`, with guards before HTTP checks, installer downloads and install launch. This prevents the retained upstream release implementation from being used as the fork's binary update channel. Kernel updates and update-cache cleanup are unchanged. Upstream source synchronization is distinct from installing an upstream binary; neither an upstream tag nor a fork version establishes a release channel. Future distribution requires a separately reviewed fork release identity, artifact provenance and update policy. GUI presentation changes for this guard remain source-only and have not been compiled.
 - Linux package hooks refresh desktop/icon caches; RPM scripts do likewise. The OpenWrt tooling installer can install system packages, compile tools and copy libraries into system paths. Packaging scripts are not validation commands.
 - The remaining desktop models reference db identifiers, proxy rules and kernel source preferences. Profile/proxy types use desktop data-root lookup; config compilers consult geo files and other runtime helpers. Moving every module into lib.rs would expose desktop side effects rather than yield a portable core.
 
@@ -91,3 +92,8 @@ Core has no build.rs, network client, engine downloader, shell command or implic
 Keep one owner for root manifests and Cargo.lock. Treat core APIs, desktop compatibility facades and their tests as one extraction seam. Mobile UI/native manifests are separate from root dependency integration. Do not regenerate the lock concurrently or commit build caches, real subscriptions, credentials or generated binaries.
 
 Validation proceeds from source/import review to bounded pure-core tests, then compile-only desktop checks, then platform-specific native compilation and device tests. Native device validation must cover consent/cancellation, reconnect/revoke, background transitions, routing/DNS and leaks. Never substitute launching the application or installer for a pure unit-test gate.
+
+
+### Development-updater validation checkpoint
+
+The headless updater-guard checkpoint used test-harness ELF SHA-256 `2473812d5d5b6be607f2a7c054fb822d2f4bfd7e61dc742654ce90aa943e6171`. Eleven exact pure tests passed without launching application main, GUI, an installer or a native VPN runtime. This evidence covers the headless policy/API guard scope, not rendering or execution of the About-page controls.
