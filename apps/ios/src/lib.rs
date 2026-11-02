@@ -13,7 +13,16 @@ pub extern "C" fn vp_client_ios_main() -> std::ffi::c_int {
     match eframe::run_native(
         "VPN Parser",
         options,
-        Box::new(|cc| Ok(Box::new(vp_client_mobile_ui::MobileApp::new(cc, "iOS")))),
+        Box::new(|cc| {
+            Ok(Box::new(vp_client_mobile_ui::MobileApp::new(
+                cc,
+                "iOS",
+                Box::new(|| vp_client_core::parser::NodeMetadata {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    timestamp: chrono::Utc::now(),
+                }),
+            )))
+        }),
     ) {
         Ok(()) => 0,
         Err(_) => 1, // No profile/credential data crosses the native diagnostic boundary.

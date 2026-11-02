@@ -1,9 +1,18 @@
-use crate::{editor::Editor, theme};
+use crate::{
+    editor::Editor,
+    import::{display_text, ImportState},
+    theme,
+};
 use eframe::egui::{self, RichText};
 use vp_client_core::config::{RoutingMode, RuleAction, RuleMatcher, TrafficRule};
+use vp_client_core::{
+    geo::{BytesGeoProvider, GeoUnavailable},
+    parser::NodeMetadata,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
+    Nodes,
     Routing,
     Dns,
     About,
@@ -18,9 +27,17 @@ pub struct MobileApp {
     dark: bool,
     rule_domain: String,
     message: &'static str,
+    imports: ImportState,
+    import_text: String,
+    metadata: Box<dyn FnMut() -> NodeMetadata>,
+    confirm_clear_imports: bool,
 }
 impl MobileApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, platform: &'static str) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        platform: &'static str,
+        metadata: Box<dyn FnMut() -> NodeMetadata>,
+    ) -> Self {
         theme::apply(&cc.egui_ctx, theme::DEFAULT_THEME, false);
         cc.egui_ctx.style_mut(|style| {
             style.spacing.interact_size.y = 48.0;
@@ -35,11 +52,124 @@ impl MobileApp {
         Self {
             platform,
             editor: Editor::default(),
-            page: Page::Routing,
+            page: Page::Nodes,
             dark: false,
             rule_domain: String::new(),
             message: "",
+            confirm_clear_imports: false,
+            imports: ImportState::default(),
+            import_text: String::new(),
+            metadata,
         }
+    }
+
+    fn nodes(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Import subscription content");
+        ui.label("Paste URI lists, base64 content or supported YAML/JSON. No URL fetching. Memory only; closing the process loses imported nodes.");
+        ui.weak(
+            "Content can contain credentials. It is not logged, saved or sent by this importer.",
+        );
+        let changed = ui
+            .add(
+                egui::TextEdit::multiline(&mut self.import_text)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(5),
+            )
+            .changed();
+        if changed {
+            if let Err(error) = self.imports.set_input(&self.import_text) {
+                self.import_text.clear();
+                self.message = error.message();
+            } else {
+                self.message = "Input changed; preview again before confirming.";
+            }
+        }
+        if ui.button("Preview content").clicked() {
+            // Missing assets are explicitly missing, never a fabricated empty database.
+            let geo = BytesGeoProvider {
+                site: Err(GeoUnavailable::Missing),
+                ip: Err(GeoUnavailable::Missing),
+            };
+            self.message = match self.imports.prepare(&mut self.metadata, &geo) {
+                Ok(()) => "Preview only. Unsupported or malformed entries may be omitted.",
+                Err(error) => error.message(),
+            };
+        }
+        if ui.button("Cancel / clear paste").clicked() {
+            self.imports.cancel();
+            self.import_text.clear();
+            self.message = "Paste and preview cleared; imported nodes unchanged.";
+        }
+        if let Some(preview) = self.imports.preview() {
+            ui.separator();
+            ui.label(format!(
+                "{} recognized nodes · {} rule drafts",
+                preview.nodes().len(),
+                preview.rules().len()
+            ));
+            ui.label(
+                "Geo assets not supplied. Rules are unverified and will not be applied to traffic.",
+            );
+            for warning in preview.warnings().iter().take(12) {
+                ui.label(format!(
+                    "Rule {}: {}",
+                    warning.rule_index.saturating_add(1),
+                    warning.message()
+                ));
+            }
+            if preview.warnings().len() > 12 {
+                ui.label("Additional geo warnings omitted from this view.");
+            }
+            for node in preview.nodes().iter().take(20) {
+                ui.label(format!(
+                    "{} · {} · {}:{} · Not tested",
+                    display_text(&node.name),
+                    display_text(&node.protocol),
+                    display_text(&node.server),
+                    node.port
+                ));
+            }
+            if preview.nodes().len() > 20 {
+                ui.label("Preview shows the first 20 nodes.");
+            }
+        }
+        if ui
+            .add_enabled(
+                self.imports.preview().is_some(),
+                egui::Button::new("Confirm import to memory"),
+            )
+            .clicked()
+        {
+            self.message = match self.imports.confirm() {
+                Ok(0) => {
+                    self.import_text.clear();
+                    "No new nodes; duplicates already exist. Rule drafts retained locally."
+                }
+                Ok(_) => {
+                    self.import_text.clear();
+                    "Nodes imported to memory; no connection or latency test started."
+                }
+                Err(error) => error.message(),
+            };
+        }
+        ui.separator();
+        ui.label(format!(
+            "Imported: {} nodes · {} unapplied rule drafts",
+            self.imports.nodes().len(),
+            self.imports.rules().len()
+        ));
+        egui::ScrollArea::vertical()
+            .id_salt("imported-nodes")
+            .max_height(260.0)
+            .show(ui, |ui| {
+                for node in self.imports.nodes() {
+                    ui.label(format!(
+                        "{} · {} · Not tested",
+                        display_text(&node.name),
+                        display_text(&node.protocol)
+                    ));
+                }
+            });
     }
 
     fn routing(&mut self, ui: &mut egui::Ui) {
@@ -144,8 +274,9 @@ impl eframe::App for MobileApp {
         });
         egui::TopBottomPanel::bottom("navigation").show(ctx, |ui| {
             ui.add_space(8.0);
-            ui.columns(3, |columns| {
+            ui.columns(4, |columns| {
                 for (column, (page, title)) in columns.iter_mut().zip([
+                    (Page::Nodes, "Nodes"),
                     (Page::Routing, "Routing"),
                     (Page::Dns, "DNS"),
                     (Page::About, "About"),
@@ -158,6 +289,7 @@ impl eframe::App for MobileApp {
                         .clicked()
                     {
                         self.page = page;
+                        self.confirm_clear_imports = false;
                         self.message = "";
                     }
                 }
@@ -169,20 +301,41 @@ impl eframe::App for MobileApp {
                 ui.set_max_width(620.0);
                 ui.add_space(8.0);
                 match self.page {
+                    Page::Nodes => self.nodes(ui),
                     Page::Routing => self.routing(ui),
                     Page::Dns => self.dns(ui),
                     Page::About => {
                         ui.heading("Mobile configuration shell");
                         ui.label(format!("{} · egui · shared Rust core", self.platform));
                         ui.label("Built from the VPN Parser fork, reusing its palette, DNS validator and routing models.");
-                        ui.label("Not connected. Node import, subscriptions, secure storage and native VPN lifecycle are not integrated yet. Drafts disappear when the process closes.");
+                        ui.label("Not connected. Paste import is memory-only. Subscription fetching, secure storage and native VPN lifecycle are not integrated yet. Drafts disappear when the process closes.");
                         if ui.checkbox(&mut self.dark, "Dark appearance").changed() {
                             theme::apply(ctx, theme::DEFAULT_THEME, self.dark);
                             ctx.style_mut(|style| style.spacing.interact_size.y = 48.0);
                         }
-                        if ui.button("Reset local draft").clicked() {
+                        if ui.button("Reset Routing / DNS draft").clicked() {
                             self.editor = Editor::default(); self.rule_domain.clear();
-                            self.message = "Local draft reset.";
+                            self.message = "Routing / DNS draft reset. Imported data unchanged.";
+                        }
+                        ui.separator();
+                        if ui.button("Clear all imported data...").clicked() {
+                            self.confirm_clear_imports = true;
+                        }
+                        if self.confirm_clear_imports {
+                            egui::Frame::group(ui.style()).show(ui, |ui| {
+                                ui.label("Remove all imported nodes, imported rule drafts, preview and pasted content from this app state?");
+                                ui.weak("Routing / DNS drafts are unchanged. This is not secure memory erasure or clipboard clearing.");
+                                if ui.button("Confirm: clear imported data").clicked() {
+                                    self.imports = ImportState::default();
+                                    self.import_text.clear();
+                                    self.confirm_clear_imports = false;
+                                    self.message = "Imported nodes, rules, preview and paste cleared from app state.";
+                                }
+                                if ui.button("Cancel clearing").clicked() {
+                                    self.confirm_clear_imports = false;
+                                    self.message = "Clear canceled. Imported data unchanged.";
+                                }
+                            });
                         }
                         ui.label("Upstream: mateo-ki/vpn-parser · MIT license");
                     }

@@ -21,9 +21,9 @@ The root workspace contains:
 
 - `vpn-parser`: the existing desktop binary.
 - `crates/vp-client-core`: shared configuration, node DTOs, subscription/protocol parsers and explicit-provider geo/rule parsing.
-- `crates/vp-client-mobile-ui`: shared egui mobile configuration-editor source.
+- `crates/vp-client-mobile-ui`: shared egui configuration/import UI source and a separately testable pure import model.
 
-`apps/android` and `apps/ios` are explicitly excluded from the root workspace and declare independent native workspaces. The mobile contribution contains 21 source files and has received static checks only; native compilation, UI rendering and VPN operation have not been validated.
+`apps/android` and `apps/ios` are explicitly excluded from the root workspace and declare independent native workspaces. The initial native shells received static checks only. The subsequent mobile import model now has a passing pure-model gate; native compilation, UI rendering and VPN operation remain unvalidated.
 
 The root Cargo.lock was reconciled using normal Cargo processing for the shared-parser extraction. Its SHA-256 at this checkpoint is:
 
@@ -53,7 +53,13 @@ Core now exposes `parser::parse_subscription`, URI and Clash parsers, OpenRung p
 
 Rule parsing and geo category scanning use an explicit `GeoProvider`. Native callers can supply asset bytes through `BytesGeoProvider` or a precise unavailable reason. Present categories are accepted; known absent categories are filtered with diagnostics. Missing, unreadable or malformed inventories remain distinguishable from an actual scanned absence and retain upstream defer-to-engine validation behavior. Desktop filesystem inventory access stays in its provider; the core does not choose data paths or read geo files.
 
-Entropy, key generation and WARP registration remain desktop-side. Moving pure MASQUE parsing does not move those operations into core. Desktop public parser signatures are retained through compatibility adapters. Mobile import UI and native VPN integration are not wired to this parser yet.
+Entropy, key generation and WARP registration remain desktop-side. Moving pure MASQUE parsing does not move those operations into core. Desktop public parser signatures are retained through compatibility adapters. The mobile import UI source now uses this parser through a paste/preview/confirm model. Native VPN integration remains unwired.
+
+### Mobile import model and UI source
+
+The paste/preview/confirm model imports nodes and rules into memory only. Its host metadata source supplies real UUIDs and UTC timestamps; parsing does not fetch subscriptions, persist data or start a VPN. The egui import controls are wired in source, not yet rendering/native validated.
+
+The `rendering` feature remains enabled by default, with eframe/once_cell optional so `--no-default-features` can test the pure import/editor model without GUI dependencies. The existing `cfg(not(test))` exclusion for the desktop theme/app prevents those components from being compiled by unit tests: passing the model gate does not prove GUI compilation. The mobile-model gate left the root Cargo.lock checkpoint hash above unchanged.
 
 ## Verification status
 
@@ -64,7 +70,7 @@ Entropy, key generation and WARP registration remain desktop-side. Moving pure M
 | Full shared parser, current actual workspace | 71/71 core tests passed: 54 unit + 17 integration (6 config compatibility, 6 parser/DTO compatibility, 5 full-parser extraction) | Core scope only; not GUI, native platforms or runtime |
 | Linux headless desktop compatibility | Root headless test harness compiled; eight exact pure regression tests passed | Not the complete root test suite; application main, GUI and engine runtime were not launched |
 | Root dependency lock | Normal Cargo reconciliation for the shared parser; checkpoint hash above | Lock reconciliation alone is not cross-platform or runtime validation |
-| Mobile source | 21 files, static checks only | No native compile, rendering, device lifecycle or VPN evidence |
+| Mobile import/editor model | 15 pure tests passed (13 import + 2 editor) using `--no-default-features`; 67-package graph (66 core graph packages + mobile model), no GUI dependencies | Import UI source is wired, but no native compile, rendering, device lifecycle or VPN evidence |
 | Development application-updater guard | Same 213-package headless graph compiled; eleven exact pure tests passed (prior eight + three guard tests) | GUI guard presentation is source-only, not compiled; main, native clients and runtime remain unvalidated |
 | Desktop runtime | Not launched as validation | No claim that main/GUI, engine execution or host networking has been tested |
 
@@ -81,7 +87,7 @@ Core has no build.rs, network client, engine downloader, shell command or implic
 
 ## Next extraction boundaries
 
-1. **Parser consumers:** wire the shared parser into mobile import UI with explicit metadata and geo providers. Preserve diagnostics and protocol fields; do not substitute absent-data stubs or report a VPN connection from a successful import.
+1. **Parser consumers:** validate the now-wired mobile import UI on real rendering/native targets. Its nodes/rules remain memory-only; persistence and native VPN application are separate future integrations. Preserve diagnostics and protocol fields; never report a VPN connection from a successful import.
 2. **Rules/config compilation:** reuse upstream IR rather than introduce a second compiler. Inject geo inventories and connectivity-test settings; separate pure compiler inputs from file lookup and executable discovery. Preserve golden outputs per backend.
 3. **Data layer:** accept explicit storage roots and repository interfaces. Place SQLite in a separate, feature-gated data adapter rather than the always-linked pure core. Keep profile file import/export explicit.
 4. **Native adapters:** implement lifecycle/capability contracts with honest unsupported states, cancellation and typed failures. Never route a mobile build through the desktop platform fallback to Linux executable assets.
