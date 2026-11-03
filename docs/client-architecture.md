@@ -126,3 +126,22 @@ Validation proceeds from source/import review to bounded pure-core tests, then c
 ### Development-updater validation checkpoint
 
 The headless updater-guard checkpoint used test-harness ELF SHA-256 `2473812d5d5b6be607f2a7c054fb822d2f4bfd7e61dc742654ce90aa943e6171`. Eleven exact pure tests passed without launching application main, GUI, an installer or a native VPN runtime. This evidence covers the headless policy/API guard scope, not rendering or execution of the About-page controls.
+
+### Work in progress: platform lifecycle and asset selection
+
+The development branch adds a pure, platform-neutral mobile connection state
+model. It requires an explicitly available engine and user permission, does not
+mark connected until protected sockets, packet forwarding and DNS evidence are
+reported, invalidates stale callbacks, and blocks new starts when stop is
+uncertain. Eight standalone Rust unit tests cover these transitions. The model
+is not yet connected to Android `VpnService`, a real engine, a device UI, or
+network traffic; it is not a working Android VPN.
+
+The desktop source also selects macOS engine release assets by the explicit CPU
+architecture, without cross-architecture fallback; Linux ARM64 and x86_64 are
+kept distinct, while unsupported combinations fail closed. Five standalone
+selection tests pass against asset names observed in the corresponding upstream
+releases. The full desktop application has not been compiled or run after this
+change; actual downloads, executable verification, engine startup, and native
+macOS behavior still require independent validation. Existing user permissions and
+upstream attribution remain unchanged.

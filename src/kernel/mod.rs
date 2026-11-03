@@ -8,6 +8,7 @@ use tokio::process::Command;
 use crate::models::Node;
 
 mod updater;
+mod asset_arch;
 
 pub use updater::{
     proxy_candidates, source_from_id, KernelReleaseInfo, KernelSource, KernelUpdateProgress,
@@ -201,7 +202,7 @@ impl KernelKind {
     }
 
     pub fn asset_name(self, tag: &str) -> String {
-        self.asset_name_for(KernelPlatform::current(), tag)
+        self.asset_candidates(tag).into_iter().next().unwrap_or_default()
     }
 
     /// 四个内核在各平台上发的容器格式与候选资产列表（首选标准版，备选兼容版 compatible）：
@@ -211,6 +212,14 @@ impl KernelKind {
     /// shoes: Windows (.zip), Linux (.tar.gz), macOS (.tar.gz)
     /// meow: Windows (.zip), Linux (.tar.gz), macOS (.tar.gz)
     pub fn asset_candidates_for(self, platform: KernelPlatform, tag: &str) -> Vec<String> {
+        self.asset_candidates_for_arch(platform, "x86_64", tag)
+    }
+
+    /// Explicit CPU selection. Unsupported combinations fail closed.
+    pub fn asset_candidates_for_arch(self, platform: KernelPlatform, arch: &str, tag: &str) -> Vec<String> {
+        if platform == KernelPlatform::MacOS { return asset_arch::macos_assets(self.as_str(), arch, tag); }
+        if platform == KernelPlatform::Linux && arch == "aarch64" { return asset_arch::linux_arm64_assets(self.as_str(), tag); }
+        if arch != "x86_64" { return Vec::new(); }
         let version = tag.trim_start_matches('v');
         match (self, platform) {
             (Self::Mihomo, KernelPlatform::Windows) => vec![
@@ -266,8 +275,6 @@ impl KernelKind {
             (Self::VpCore, KernelPlatform::Linux) => vec![
                 format!("vpcore-v{version}-x86_64-unknown-linux-musl.tar.gz"),
                 format!("vpcore-{tag}-x86_64-unknown-linux-musl.tar.gz"),
-                format!("vpcore-v{version}-aarch64-unknown-linux-musl.tar.gz"),
-                format!("vpcore-{tag}-aarch64-unknown-linux-musl.tar.gz"),
             ],
             (Self::VpCore, KernelPlatform::MacOS) => vec![
                 format!("vpcore-v{version}-aarch64-apple-darwin.tar.gz"),
@@ -279,11 +286,12 @@ impl KernelKind {
     }
 
     pub fn asset_name_for(self, platform: KernelPlatform, tag: &str) -> String {
-        self.asset_candidates_for(platform, tag)[0].clone()
+        self.asset_candidates_for(platform, tag).into_iter().next().unwrap_or_default()
     }
 
     pub fn asset_candidates(self, tag: &str) -> Vec<String> {
-        self.asset_candidates_for(KernelPlatform::current(), tag)
+        if !cfg!(any(target_os = "windows", target_os = "linux", target_os = "macos")) { return Vec::new(); }
+        self.asset_candidates_for_arch(KernelPlatform::current(), std::env::consts::ARCH, tag)
     }
 
     pub fn matches_archive_executable(self, file_name: &str) -> bool {
@@ -1419,12 +1427,29 @@ Use tags: with_gvisor
         );
         assert_eq!(
             KernelKind::Shoes.asset_name_for(KernelPlatform::MacOS, "v0.3.3"),
-            "shoes-aarch64-apple-darwin.tar.gz"
+            "shoes-x86_64-apple-darwin.tar.gz"
         );
         assert_eq!(
             KernelKind::VpCore.asset_name_for(KernelPlatform::MacOS, "v1.0.0"),
-            "vpcore-v1.0.0-aarch64-apple-darwin.tar.gz"
+            "vpcore-v1.0.0-x86_64-apple-darwin.tar.gz"
         );
+    }
+
+    #[test]
+    fn kernel_assets_never_cross_cpu_architecture() {
+        for kind in [KernelKind::Mihomo, KernelKind::Xray, KernelKind::SingBox, KernelKind::Shoes, KernelKind::Meow, KernelKind::VpCore] {
+            let arm = kind.asset_candidates_for_arch(KernelPlatform::MacOS, "aarch64", "v1.2.3");
+            assert!(!arm.is_empty());
+            assert!(arm.iter().all(|v| !v.contains("amd64") && !v.contains("x86_64") && !v.contains("macos-64")));
+            let intel = kind.asset_candidates_for_arch(KernelPlatform::MacOS, "x86_64", "v1.2.3");
+            assert!(!intel.is_empty());
+            assert!(intel.iter().all(|v| !v.contains("arm64") && !v.contains("aarch64")));
+            assert!(kind.asset_candidates_for_arch(KernelPlatform::MacOS, "unknown", "v1.2.3").is_empty());
+            let linux_arm = kind.asset_candidates_for_arch(KernelPlatform::Linux, "aarch64", "v1.2.3");
+            assert!(!linux_arm.is_empty());
+            assert!(linux_arm.iter().all(|v| !v.contains("amd64") && !v.contains("x86_64")));
+        }
+        assert!(KernelKind::VpCore.asset_candidates_for_arch(KernelPlatform::Linux, "x86_64", "v1.2.3").iter().all(|v| !v.contains("aarch64")));
     }
 
     #[test]

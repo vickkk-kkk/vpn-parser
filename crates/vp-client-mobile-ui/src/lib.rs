@@ -13,6 +13,9 @@ mod theme;
 #[cfg(all(feature = "rendering", not(test)))]
 pub use app::MobileApp;
 
+/// Pure connection lifecycle; platform backends must supply real events.
+pub mod connection;
+
 /// Pure paste/preview/confirm model; available without rendering dependencies.
 pub mod import;
 

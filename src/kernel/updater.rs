@@ -331,6 +331,7 @@ impl KernelUpdater {
     pub async fn check(&self, info: &KernelInfo) -> Result<KernelReleaseInfo> {
         let release = self.fetch_release(info.kind).await?;
         let asset_name = info.kind.asset_name(&release.tag_name);
+        if asset_name.is_empty() { anyhow::bail!("当前 CPU 架构没有经过确认的内核发布资产"); }
         let asset = release
             .assets
             .iter()
