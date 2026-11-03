@@ -156,7 +156,7 @@ the full Cargo integration tests and all engine runtime interoperability remain
 unverified. Importing a node does not establish a working VPN.
 
 The diagnostic shell now suppresses the startup and GUI automatic kernel/Geo
-asset downloads. This is not a network sandbox for explicit actions or every
+asset downloads and the subscription-fetch/speed-test scheduler. This is not a network sandbox for explicit actions or every
 possible background network operation. Three isolated diagnostic-policy tests
 pass; GUI compilation and an actual macOS network observation remain pending.
 The macOS packaging workflow now ad-hoc signs and strictly verifies the final

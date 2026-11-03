@@ -498,12 +498,14 @@ fn main() -> Result<()> {
         None
     };
 
-    // Background scheduler: auto-fetch / auto-speedtest
-    {
+    // A diagnostic process must not schedule subscription fetches or tests.
+    if !diag {
         let scheduler = Scheduler::new(db.clone(), collector.clone(), speedtester.clone());
         rt.spawn(async move {
             scheduler.run_loop().await;
         });
+    } else {
+        startup_log("DIAG: 跳过订阅自动拉取及测速调度");
     }
 
     // Create ApiServerController for dynamic start/stop

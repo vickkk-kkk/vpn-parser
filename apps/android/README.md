@@ -32,6 +32,14 @@ it does not prove exported symbols, successful linking, or runtime behavior.
 The wrapper JAR matches Gradle 8.9's published SHA-256
 `498495120a03b9a6ab5d155f5de3c8f0d986a449153702fb80fc80e134484f17`.
 
+The Rust cross build also needs an NDK linker. For the reported macOS NDK
+27.2 setup, set `ANDROID_NDK_HOME` to that installed NDK and set
+`CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER` to
+`$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android26-clang`.
+The host-tag spelling follows Android's NDK documentation even on an Apple
+Silicon Mac. Confirm that the file exists and the Rust target is installed;
+this repository does not install the toolchain or accept SDK terms for you.
+
 The application intentionally has no INTERNET permission, VPN service,
 VpnService consent request, embedded engine, downloader, process runner, desktop
 system-proxy integration or background service. Configuration drafts are memory-only.
