@@ -1,5 +1,6 @@
 //! Platform runtime interface. No implementation or side effect is provided here.
 use std::net::SocketAddr;
+use crate::connection::Engine;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeError { Unavailable, Unsupported, InvalidInput, PermissionRequired, Failed }
@@ -10,9 +11,9 @@ pub enum RuntimeObservation { Unavailable, Idle, Starting, Verifying, ReportedAc
 /// Implementations own and erase their staged secrets, and must preflight the
 /// exact configuration before consent and before starting. No implicit fallback.
 pub trait RuntimeHost {
-    fn available(&mut self) -> bool;
+    fn supports(&mut self, engine: Engine) -> bool;
     fn observe(&mut self) -> RuntimeObservation;
-    fn prepare(&mut self, raw_uri: &str, node_id: &str, bootstrap: &[SocketAddr], user_dns: &[SocketAddr]) -> Result<(), RuntimeError>;
+    fn prepare(&mut self, engine: Engine, raw_uri: &str, node_id: &str, bootstrap: &[SocketAddr], user_dns: &[SocketAddr]) -> Result<(), RuntimeError>;
     fn request_consent(&mut self) -> Result<(), RuntimeError>;
     fn consent_granted(&mut self) -> bool;
     fn start(&mut self) -> Result<(), RuntimeError>;

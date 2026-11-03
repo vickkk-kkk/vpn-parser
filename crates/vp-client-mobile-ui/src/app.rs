@@ -1,5 +1,6 @@
 use crate::{
     editor::Editor,
+    connection::Engine,
     fonts,
     import::{display_text, ImportState},
     preview::{ConfigPreview, ENGINES, TEMPLATE_NOTICE},
@@ -38,6 +39,7 @@ pub struct MobileApp {
     confirm_clear_imports: bool,
     config_preview: ConfigPreview,
     runtime: Option<Box<dyn RuntimeHost>>,
+    runtime_engine: Engine,
     runtime_node: Option<String>,
     runtime_bootstrap: String,
     runtime_dns: String,
@@ -77,6 +79,7 @@ impl MobileApp {
             import_text: String::new(),
             metadata,
             runtime: None,
+            runtime_engine: Engine::VpCore,
             runtime_node: None,
             runtime_bootstrap: String::new(),
             runtime_dns: String::new(),
@@ -110,8 +113,21 @@ impl MobileApp {
 
     fn connection(&mut self, ui: &mut egui::Ui) {
         ui.heading("Android VPN 实验连接");
-        ui.label("仅 vp_core；其他内核尚未接入。请在 Routing 选择 Global proxy；规则草稿不会应用。连接和 DNS 泄漏尚未验收。");
+        ui.label("请在 Routing 选择 Global proxy；规则草稿不会应用。连接和 DNS 泄漏尚未验收。");
         if self.runtime.is_none() { ui.label("原生组件未绑定。"); return; }
+        let engines = [(Engine::VpCore, "vp_core"), (Engine::SingBox, "sing-box"),
+            (Engine::Mihomo, "Mihomo"), (Engine::Xray, "Xray"), (Engine::Shoes, "Shoes"), (Engine::Meow, "Meow")];
+        let mut chosen = self.runtime_engine;
+        egui::ComboBox::from_id_salt("runtime-engine").selected_text(
+            engines.iter().find(|(engine, _)| *engine == chosen).map(|(_, name)| *name).unwrap_or("未选择")
+        ).show_ui(ui, |ui| {
+            for (engine, name) in engines {
+                let available = self.runtime.as_mut().map(|host| host.supports(engine)).unwrap_or(false);
+                let caption = if available { name.to_owned() } else { format!("{name}（不可用）") };
+                if ui.add_enabled(available, egui::Button::new(caption).selected(chosen == engine)).clicked() { chosen = engine; }
+            }
+        });
+        if chosen != self.runtime_engine { self.runtime_engine = chosen; self.clear_runtime_draft(); }
         let selected = self.imports.nodes().iter().find(|n| Some(n.id.as_str()) == self.runtime_node.as_deref());
         let label = selected.map(|n| display_text(&n.name)).unwrap_or_else(|| "选择节点".into());
         let mut selected_id = self.runtime_node.clone();
@@ -133,7 +149,7 @@ impl MobileApp {
                 Err(RuntimeError::Unsupported)
             } else { match (node, parse_dns(&self.runtime_bootstrap), parse_dns(&self.runtime_dns), self.runtime.as_mut()) {
                 (Some(node), Ok(bootstrap), Ok(dns), Some(runtime)) => {
-                    if runtime.available() { runtime.prepare(&node.raw, &node.id, &bootstrap, &dns) }
+                    if runtime.supports(self.runtime_engine) { runtime.prepare(self.runtime_engine, &node.raw, &node.id, &bootstrap, &dns) }
                     else { Err(RuntimeError::Unavailable) }
                 }
                 _ => Err(RuntimeError::InvalidInput),
@@ -149,7 +165,7 @@ impl MobileApp {
                 Err(e) => Self::runtime_error(e),
             };
         }
-        if ui.add_enabled(self.runtime_prepared, egui::Button::new("启动 vp_core")).clicked() {
+        if ui.add_enabled(self.runtime_prepared, egui::Button::new("启动所选内核")).clicked() {
             let present = self.imports.nodes().iter().any(|n| Some(n.id.as_str()) == self.runtime_node.as_deref());
             let host = self.runtime.as_mut().unwrap();
             self.runtime_message = if !matches!(self.editor.mode, RoutingMode::Global) { "当前仅支持全局代理，请重新检查。" }
