@@ -11,8 +11,9 @@ palette and extracted configuration logic, not a separate mock dashboard.
 
 `app/src/main/AndroidManifest.xml` registers `android.app.NativeActivity`, loading
 `libvp_client_android.so`. The Gradle source project expects a separately built
-arm64 library at `app/src/main/jniLibs/arm64-v8a/`. No Gradle wrapper binary or
-Rust build hook is included. SDK/NDK/Gradle installation, dependency resolution,
+arm64 library at `app/src/main/jniLibs/arm64-v8a/`. The Gradle 8.9 wrapper is
+included with the official distribution SHA-256; first use downloads Gradle.
+There is no Rust build hook. SDK/NDK/Gradle installation, dependency resolution,
 builds and device execution require a separately reviewed environment. Package
 IDs are development placeholders, not an established release/signing identity.
 The source pins AGP 8.7.3, SDK 35 and min SDK 26; these have not been exercised.
@@ -24,6 +25,12 @@ metadata/build remains blocked here by missing crate sources, and the arm64
 target has not been compiled. On a prepared Android build machine, start with
 `cargo build --locked --release --target aarch64-linux-android --manifest-path apps/android/Cargo.toml`
 and verify the lock remains unchanged; a successful build is still not an APK.
+Install the reviewed `.so` into the stated jniLibs path, then invoke
+`apps/android/gradlew -p apps/android assembleDebug` with JDK 17 and SDK 35.
+The packaging gate rejects a missing file or an ELF header that is not arm64;
+it does not prove exported symbols, successful linking, or runtime behavior.
+The wrapper JAR matches Gradle 8.9's published SHA-256
+`498495120a03b9a6ab5d155f5de3c8f0d986a449153702fb80fc80e134484f17`.
 
 The application intentionally has no INTERNET permission, VPN service,
 VpnService consent request, embedded engine, downloader, process runner, desktop
