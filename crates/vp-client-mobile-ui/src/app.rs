@@ -90,6 +90,7 @@ impl MobileApp {
 
     fn clear_runtime_draft(&mut self) {
         self.runtime_prepared = false;
+        self.runtime_message = "参数已变化，请重新检查；运行中的 VPN 不会自动停止。";
         if let Some(runtime) = self.runtime.as_mut() { runtime.clear_prepared(); }
     }
 
@@ -147,7 +148,8 @@ impl MobileApp {
         if ui.add_enabled(self.runtime_prepared, egui::Button::new("启动 vp_core")).clicked() {
             let present = self.imports.nodes().iter().any(|n| Some(n.id.as_str()) == self.runtime_node.as_deref());
             let host = self.runtime.as_mut().unwrap();
-            self.runtime_message = if !present { "选中的节点已不存在，请重新检查。" }
+            self.runtime_message = if !matches!(self.editor.mode, RoutingMode::Global) { "当前仅支持全局代理，请重新检查。" }
+                else if !present { "选中的节点已不存在，请重新检查。" }
                 else if !host.consent_granted() { Self::runtime_error(RuntimeError::PermissionRequired) }
                 else { match host.start() {
                     Ok(()) => "启动请求已提交；流量转发和 DNS 尚未验证。",
@@ -555,6 +557,8 @@ impl eframe::App for MobileApp {
                         }
                         if ui.button("Reset Routing / DNS draft").clicked() {
                             self.config_preview.invalidate();
+                            self.clear_runtime_draft();
+                            self.runtime_bootstrap.clear(); self.runtime_dns.clear();
                             self.editor = Editor::default(); self.rule_domain.clear();
                             self.message = "Routing / DNS draft reset. Imported data unchanged.";
                         }
@@ -565,8 +569,9 @@ impl eframe::App for MobileApp {
                         if self.confirm_clear_imports {
                             egui::Frame::group(ui.style()).show(ui, |ui| {
                                 ui.label("Remove all imported nodes, imported rule drafts, preview and pasted content from this app state?");
-                                ui.weak("Routing / DNS drafts are unchanged. This is not secure memory erasure or clipboard clearing.");
+                                ui.weak("Routing / DNS drafts are unchanged. This does not stop an active VPN, securely erase memory, or clear the clipboard.");
                                 if ui.button("Confirm: clear imported data").clicked() {
+                                    self.clear_runtime_draft(); self.runtime_node = None;
                                     self.config_preview.invalidate();
                                     self.config_preview.select_node(None);
                                     self.imports = ImportState::default();

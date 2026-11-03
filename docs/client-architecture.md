@@ -158,6 +158,8 @@ unverified. Importing a node does not establish a working VPN.
 An optional Android runtime interface and connection panel now call a supplied
 host for strict preflight, explicit consent, start and stop. It requires numeric
 bootstrap and proxied-user DNS and never presents a queued start as connected.
+Changing the node, DNS or routing mode invalidates the staged request; clearing
+imports and resetting drafts also clear it, without stopping an active tunnel.
 The optional host currently targets vp_core only; its UI and Android build have
 not been compiled or run, and no VPN, routing or leak validation is claimed.
 
