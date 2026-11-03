@@ -1,4 +1,6 @@
 plugins { id("com.android.application") }
+val nativeLibDirectory = providers.gradleProperty("vpNativeLibDir").orElse("src/main/jniLibs")
+providers.gradleProperty("vpBuildDir").orNull?.let { layout.buildDirectory.set(file(it)) }
 android {
     namespace = "org.vpnparser.client"
     compileSdk = 35
@@ -12,15 +14,15 @@ android {
     }
     // Supply libvp_client_android.so explicitly after the reviewed Rust target build.
     // No automatic Rust build, download, SDK install, or host-network action.
-    sourceSets["main"].jniLibs.srcDir("src/main/jniLibs")
+    sourceSets["main"].jniLibs.setSrcDirs(listOf(nativeLibDirectory.get()))
 }
 
 // Fail before packaging if the separately built arm64 library is missing or
 // has the wrong basic ELF architecture. This is not a link or runtime test.
 val verifyNativeLibrary by tasks.registering {
-    val library = layout.projectDirectory.file("src/main/jniLibs/arm64-v8a/libvp_client_android.so")
+    val library = file("${nativeLibDirectory.get()}/arm64-v8a/libvp_client_android.so")
     doLast {
-        val file = library.asFile
+        val file = library
         require(file.isFile && file.length() >= 64L) { "Missing arm64 libvp_client_android.so; build it before packaging." }
         val header = file.inputStream().use { it.readNBytes(20) }
         require(header.size == 20 && header[0] == 0x7f.toByte() && header[1] == 'E'.code.toByte()

@@ -40,6 +40,15 @@ The host-tag spelling follows Android's NDK documentation even on an Apple
 Silicon Mac. Confirm that the file exists and the Rust target is installed;
 this repository does not install the toolchain or accept SDK terms for you.
 
+For a clean verification build on a prepared macOS or x86_64 Linux host, run
+`apps/android/build-arm64.sh OUTPUT_DIRECTORY`. The output directory must not
+already contain the two named output files. The script uses a fresh temporary
+Cargo target, Gradle home and Gradle project cache, and deletes that temporary
+directory on exit. It preserves the resulting APK and library in the output
+directory, checks AArch64, the NativeActivity entry and byte-for-byte APK
+contents, and never installs an SDK or changes the existing Gradle cache.
+The script has not yet run end-to-end on an Android build host.
+
 The application intentionally has no INTERNET permission, VPN service,
 VpnService consent request, embedded engine, downloader, process runner, desktop
 system-proxy integration or background service. Configuration drafts are memory-only.
