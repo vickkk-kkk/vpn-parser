@@ -155,6 +155,12 @@ The actual parsing function passed two isolated tests using synthetic values;
 the full Cargo integration tests and all engine runtime interoperability remain
 unverified. Importing a node does not establish a working VPN.
 
+An optional Android runtime interface and connection panel now call a supplied
+host for strict preflight, explicit consent, start and stop. It requires numeric
+bootstrap and proxied-user DNS and never presents a queued start as connected.
+The optional host currently targets vp_core only; its UI and Android build have
+not been compiled or run, and no VPN, routing or leak validation is claimed.
+
 The diagnostic shell now suppresses the startup and GUI automatic kernel/Geo
 asset downloads and the subscription-fetch/speed-test scheduler. This is not a network sandbox for explicit actions or every
 possible background network operation. Three isolated diagnostic-policy tests

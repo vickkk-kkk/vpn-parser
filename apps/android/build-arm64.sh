@@ -35,8 +35,23 @@ export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$linker"
 export CC_aarch64_linux_android="$linker"
 export AR_aarch64_linux_android="$toolchain/llvm-ar"
 export GRADLE_USER_HOME="$work/gradle-home"
+manifest="$script_dir/Cargo.toml"
+if [ -n "${VP_EGUI_PRODUCT_ROOT:-}" ]; then
+    : "${VP_CORE_ADAPTER_SO:?Set VP_CORE_ADAPTER_SO to a reviewed arm64 vp_core adapter library}"
+    product=$(CDPATH= cd -- "$VP_EGUI_PRODUCT_ROOT" && pwd -P)
+    product_client=$(CDPATH= cd -- "$product/client" && pwd -P)
+    [ "$product_client" = "$repo" ] || { echo "Runtime must use this unified checkout's client submodule" >&2; exit 2; }
+    host_src="$product/flutter/packages/vp_runtime_android/android/src/main/cpp/vp_android_host.cpp"
+    manifest="$product/native/android/egui-app/Cargo.toml"
+    [ -f "$manifest" ] && [ -f "$host_src" ] && [ -f "$product/contracts/abi/vp_adapter.h" ] && [ -f "$VP_CORE_ADAPTER_SO" ] || { echo "Runtime sources or adapter missing" >&2; exit 2; }
+    [ -x "$toolchain/aarch64-linux-android26-clang++" ] || { echo "NDK C++ compiler missing" >&2; exit 2; }
+    "$toolchain/llvm-readelf" -h "$VP_CORE_ADAPTER_SO" | grep -Eq 'Machine:.*AArch64' || { echo "Adapter is not AArch64" >&2; exit 1; }
+    for symbol in vp_adapter_abi_info vp_adapter_validate_connect vp_adapter_create vp_adapter_request vp_adapter_next_event vp_adapter_destroy vp_adapter_bytes_free; do
+        "$toolchain/llvm-nm" -D --defined-only "$VP_CORE_ADAPTER_SO" | grep -Eq "[[:space:]]$symbol$" || { echo "Missing adapter symbol: $symbol" >&2; exit 1; }
+    done
+fi
 cd "$repo"
-cargo build --locked --release --target aarch64-linux-android --manifest-path apps/android/Cargo.toml
+cargo build --locked --release --target aarch64-linux-android --manifest-path "$manifest"
 so="$CARGO_TARGET_DIR/aarch64-linux-android/release/libvp_client_android.so"
 "$toolchain/llvm-readelf" -h "$so" | grep -Eq 'Machine:.*AArch64' || { echo "Not an AArch64 ELF" >&2; exit 1; }
 "$toolchain/llvm-nm" -D --defined-only "$so" | grep -Eq '[[:space:]]ANativeActivity_onCreate$' || { echo "NativeActivity entry missing" >&2; exit 1; }
@@ -45,11 +60,6 @@ cp "$so" "$work/jni/arm64-v8a/libvp_client_android.so"
 set -- -p "$script_dir" --project-cache-dir "$work/project-cache" \
     -PvpNativeLibDir="$work/jni" -PvpBuildDir="$work/app-build"
 if [ -n "${VP_EGUI_PRODUCT_ROOT:-}" ]; then
-    : "${VP_CORE_ADAPTER_SO:?Set VP_CORE_ADAPTER_SO to a reviewed arm64 vp_core adapter library}"
-    product=$(CDPATH= cd -- "$VP_EGUI_PRODUCT_ROOT" && pwd -P)
-    host_src="$product/flutter/packages/vp_runtime_android/android/src/main/cpp/vp_android_host.cpp"
-    [ -f "$host_src" ] && [ -f "$product/contracts/abi/vp_adapter.h" ] && [ -f "$VP_CORE_ADAPTER_SO" ] || { echo "Runtime sources or adapter missing" >&2; exit 2; }
-    "$toolchain/llvm-readelf" -h "$VP_CORE_ADAPTER_SO" | grep -Eq 'Machine:.*AArch64' || { echo "Adapter is not AArch64" >&2; exit 1; }
     "$toolchain/aarch64-linux-android26-clang++" -shared -std=c++17 -fPIC -O2 -Wall -Wextra -Werror -static-libstdc++ \
         -Wl,-z,max-page-size=16384 -Wl,-z,relro,-z,now -I"$product/contracts/abi" "$host_src" -ldl -o "$work/jni/arm64-v8a/libvp_android_host.so"
     cp "$VP_CORE_ADAPTER_SO" "$work/jni/arm64-v8a/libvp_product_core_adapter.so"

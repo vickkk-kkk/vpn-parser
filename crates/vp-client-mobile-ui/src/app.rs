@@ -3,6 +3,7 @@ use crate::{
     fonts,
     import::{display_text, ImportState},
     preview::{ConfigPreview, ENGINES, TEMPLATE_NOTICE},
+    runtime::{parse_dns, RuntimeError, RuntimeHost},
     theme,
 };
 use eframe::egui::{self, RichText};
@@ -19,6 +20,7 @@ enum Page {
     Dns,
     About,
     Configuration,
+    Connection,
 }
 
 /// Mobile adaptation of the fork's configuration workflow and palette.
@@ -35,6 +37,12 @@ pub struct MobileApp {
     metadata: Box<dyn FnMut() -> NodeMetadata>,
     confirm_clear_imports: bool,
     config_preview: ConfigPreview,
+    runtime: Option<Box<dyn RuntimeHost>>,
+    runtime_node: Option<String>,
+    runtime_bootstrap: String,
+    runtime_dns: String,
+    runtime_prepared: bool,
+    runtime_message: &'static str,
 }
 impl MobileApp {
     pub fn new(
@@ -66,7 +74,93 @@ impl MobileApp {
             imports: ImportState::default(),
             import_text: String::new(),
             metadata,
+            runtime: None,
+            runtime_node: None,
+            runtime_bootstrap: String::new(),
+            runtime_dns: String::new(),
+            runtime_prepared: false,
+            runtime_message: "尚未准备连接。",
         }
+    }
+
+    pub fn with_runtime(mut self, runtime: Box<dyn RuntimeHost>) -> Self {
+        self.runtime = Some(runtime);
+        self
+    }
+
+    fn clear_runtime_draft(&mut self) {
+        self.runtime_prepared = false;
+        if let Some(runtime) = self.runtime.as_mut() { runtime.clear_prepared(); }
+    }
+
+    fn runtime_error(error: RuntimeError) -> &'static str {
+        match error {
+            RuntimeError::Unavailable => "原生适配组件不可用。",
+            RuntimeError::Unsupported => "当前内核不支持此节点或配置。",
+            RuntimeError::InvalidInput => "节点或 DNS 输入无效。",
+            RuntimeError::PermissionRequired => "需要先获得系统 VPN 授权。",
+            RuntimeError::Failed => "操作失败；请检查原生状态。",
+        }
+    }
+
+    fn connection(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Android VPN 实验连接");
+        ui.label("仅 vp_core；其他内核尚未接入。请在 Routing 选择 Global proxy；规则草稿不会应用。连接和 DNS 泄漏尚未验收。");
+        if self.runtime.is_none() { ui.label("原生组件未绑定。"); return; }
+        let selected = self.imports.nodes().iter().find(|n| Some(n.id.as_str()) == self.runtime_node.as_deref());
+        let label = selected.map(|n| display_text(&n.name)).unwrap_or_else(|| "选择节点".into());
+        let mut selected_id = self.runtime_node.clone();
+        egui::ComboBox::from_id_salt("runtime-node").selected_text(label).show_ui(ui, |ui| {
+            for node in self.imports.nodes() {
+                ui.selectable_value(&mut selected_id, Some(node.id.clone()), display_text(&node.name));
+            }
+        });
+        if selected_id != self.runtime_node { self.runtime_node = selected_id; self.clear_runtime_draft(); }
+        ui.label("节点域名引导 DNS（直接访问，输入 IP:端口，每行一个）：");
+        let bootstrap_changed = ui.text_edit_multiline(&mut self.runtime_bootstrap).changed();
+        ui.label("用户 DNS（通过所选代理，输入 IP:端口，每行一个）：");
+        let dns_changed = ui.text_edit_multiline(&mut self.runtime_dns).changed();
+        if bootstrap_changed || dns_changed { self.clear_runtime_draft(); }
+        if ui.button("检查连接参数").clicked() {
+            self.clear_runtime_draft();
+            let node = self.imports.nodes().iter().find(|n| Some(n.id.as_str()) == self.runtime_node.as_deref());
+            let result = if !matches!(self.editor.mode, RoutingMode::Global) {
+                Err(RuntimeError::Unsupported)
+            } else { match (node, parse_dns(&self.runtime_bootstrap), parse_dns(&self.runtime_dns), self.runtime.as_mut()) {
+                (Some(node), Ok(bootstrap), Ok(dns), Some(runtime)) => {
+                    if runtime.available() { runtime.prepare(&node.raw, &node.id, &bootstrap, &dns) }
+                    else { Err(RuntimeError::Unavailable) }
+                }
+                _ => Err(RuntimeError::InvalidInput),
+            }};
+            self.runtime_message = match result {
+                Ok(()) => { self.runtime_prepared = true; "参数通过预检；尚未请求授权或启动。" }
+                Err(e) => Self::runtime_error(e),
+            };
+        }
+        if ui.add_enabled(self.runtime_prepared, egui::Button::new("请求系统 VPN 授权")).clicked() {
+            self.runtime_message = match self.runtime.as_mut().unwrap().request_consent() {
+                Ok(()) => "已请求授权；请完成系统提示后手动启动。",
+                Err(e) => Self::runtime_error(e),
+            };
+        }
+        if ui.add_enabled(self.runtime_prepared, egui::Button::new("启动 vp_core")).clicked() {
+            let present = self.imports.nodes().iter().any(|n| Some(n.id.as_str()) == self.runtime_node.as_deref());
+            let host = self.runtime.as_mut().unwrap();
+            self.runtime_message = if !present { "选中的节点已不存在，请重新检查。" }
+                else if !host.consent_granted() { Self::runtime_error(RuntimeError::PermissionRequired) }
+                else { match host.start() {
+                    Ok(()) => "启动请求已提交；流量转发和 DNS 尚未验证。",
+                    Err(e) => Self::runtime_error(e),
+                }};
+        }
+        if ui.button("停止 VPN").clicked() {
+            self.runtime_message = match self.runtime.as_mut().unwrap().stop() {
+                Ok(()) => "停止请求已提交；请等待原生组件确认。",
+                Err(e) => Self::runtime_error(e),
+            };
+        }
+        ui.label(self.runtime_message);
     }
 
     fn nodes(&mut self, ui: &mut egui::Ui) {
@@ -292,7 +386,7 @@ impl MobileApp {
 
     fn routing(&mut self, ui: &mut egui::Ui) {
         ui.heading("Routing draft");
-        ui.label("Uses the same routing types as the desktop client. Changes are not applied to device traffic.");
+        ui.label("Routing drafts do not change an active tunnel. The experimental Android host only accepts Global proxy; rule and direct modes remain unavailable.");
         for (mode, label) in [
             (RoutingMode::Rule, "Rules"),
             (RoutingMode::Global, "Global proxy"),
@@ -303,6 +397,7 @@ impl MobileApp {
                 .changed()
             {
                 self.config_preview.invalidate();
+                self.clear_runtime_draft();
             }
         }
         ui.separator();
@@ -403,19 +498,20 @@ impl eframe::App for MobileApp {
             ui.heading("VPN Parser");
             ui.colored_label(
                 theme::palette_for(theme::DEFAULT_THEME, self.dark).warning,
-                "Tunnel unavailable · no native engine bound",
+                if self.runtime.is_some() { "原生实验组件已绑定；连接状态未验证" } else { "Tunnel unavailable · no native engine bound" },
             );
-            ui.add_enabled(false, egui::Button::new("Connect unavailable"));
+            if self.runtime.is_none() { ui.add_enabled(false, egui::Button::new("Connect unavailable")); }
             ui.add_space(4.0);
         });
         egui::TopBottomPanel::bottom("navigation").show(ctx, |ui| {
             ui.add_space(8.0);
-            ui.columns(5, |columns| {
+            ui.columns(6, |columns| {
                 for (column, (page, title)) in columns.iter_mut().zip([
                     (Page::Nodes, "Nodes"),
                     (Page::Routing, "Routing"),
                     (Page::Dns, "DNS"),
                     (Page::Configuration, "Config"),
+                    (Page::Connection, "VPN"),
                     (Page::About, "About"),
                 ]) {
                     if column
@@ -443,11 +539,16 @@ impl eframe::App for MobileApp {
                     Page::Routing => self.routing(ui),
                     Page::Dns => self.dns(ui),
                     Page::Configuration => self.configuration(ui),
+                    Page::Connection => self.connection(ui),
                     Page::About => {
                         ui.heading("Mobile configuration shell");
                         ui.label(format!("{} · egui · shared Rust core", self.platform));
                         ui.label("Built from the VPN Parser fork, reusing its palette, DNS validator and routing models.");
-                        ui.label("Not connected. Paste import is memory-only. Subscription fetching, secure storage and native VPN lifecycle are not integrated yet. Drafts disappear when the process closes.");
+                        if self.runtime.is_some() {
+                            ui.label("Experimental vp_core host bound. Import is memory-only; VPN and DNS behavior are not yet verified. Drafts disappear when the process closes.");
+                        } else {
+                            ui.label("Not connected. Paste import is memory-only. Subscription fetching, secure storage and native VPN lifecycle are not integrated yet. Drafts disappear when the process closes.");
+                        }
                         if ui.checkbox(&mut self.dark, "Dark appearance").changed() {
                             theme::apply(ctx, theme::DEFAULT_THEME, self.dark);
                             ctx.style_mut(|style| style.spacing.interact_size.y = 48.0);

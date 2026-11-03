@@ -21,3 +21,6 @@ pub mod import;
 
 /// Pure checked configuration-preview state; never starts an engine.
 pub mod preview;
+
+/// Platform-owned runtime boundary. The default mobile shell supplies none.
+pub mod runtime;
