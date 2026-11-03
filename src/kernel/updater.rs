@@ -330,14 +330,19 @@ impl KernelUpdater {
 
     pub async fn check(&self, info: &KernelInfo) -> Result<KernelReleaseInfo> {
         let release = self.fetch_release(info.kind).await?;
-        let asset_name = info.kind.asset_name(&release.tag_name);
-        if asset_name.is_empty() { anyhow::bail!("当前 CPU 架构没有经过确认的内核发布资产"); }
-        let asset = release
-            .assets
-            .iter()
-            .find(|asset| asset.name == asset_name)
-            .with_context(|| format!("官方 Release 未找到资产 {asset_name}"))?;
-        require_sha256(asset)?;
+        let candidates = info.kind.asset_candidates(&release.tag_name);
+        if candidates.is_empty() {
+            anyhow::bail!("当前 CPU 架构没有经过确认的内核发布资产");
+        }
+        // Match the installer's same-architecture fallback policy. An asset
+        // without a valid digest or with an invalid size is not installable.
+        let asset_name = super::asset_arch::first_usable(&candidates, |name| {
+            release.assets.iter().find(|asset| asset.name == name).is_some_and(|asset| {
+                asset.size > 0 && asset.size <= MAX_ARCHIVE_SIZE && require_sha256(asset).is_ok()
+            })
+        }).context("官方 Release 没有适用于当前架构且具有有效 SHA-256 和大小的资产")?;
+        let asset = release.assets.iter().find(|asset| asset.name == asset_name)
+            .context("已选择的 Release 资产不可用")?;
         let update_available = match info.version.as_deref() {
             Some(current) => !version_matches(current, &release.tag_name),
             None => true,

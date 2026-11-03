@@ -1,6 +1,12 @@
 //! Exact macOS release-asset selection by CPU architecture. Unknown CPUs never
 //! fall back to another architecture or rely on Rosetta implicitly.
 
+/// Preserve the architecture-specific preference order while considering only
+/// assets the caller has independently validated as usable.
+pub(super) fn first_usable<'a>(names: &'a [String], mut usable: impl FnMut(&str) -> bool) -> Option<&'a str> {
+    names.iter().map(String::as_str).find(|name| usable(name))
+}
+
 pub(super) fn macos_assets(kind: &str, arch: &str, tag: &str) -> Vec<String> {
     let version = tag.trim_start_matches('v');
     let mut names = match (kind, arch) {
@@ -39,6 +45,13 @@ pub(super) fn linux_arm64_assets(kind: &str, tag: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn selection_uses_only_usable_candidates_in_preference_order() {
+        let names = vec!["preferred-arm64".to_owned(), "alternate-arm64".to_owned()];
+        assert_eq!(first_usable(&names, |name| name == "alternate-arm64"), Some("alternate-arm64"));
+        assert_eq!(first_usable(&names, |_| true), Some("preferred-arm64"));
+        assert_eq!(first_usable(&names, |_| false), None);
+        assert_eq!(first_usable(&[], |_| true), None);
+    }
     #[test] fn apple_silicon_assets_are_native_and_never_intel() {
         for kind in ["mihomo","xray","sing_box","shoes","meow","vpcore"] {
             let values=macos_assets(kind,"aarch64","v1.2.3");assert!(!values.is_empty());

@@ -139,9 +139,11 @@ network traffic; it is not a working Android VPN.
 
 The desktop source also selects macOS engine release assets by the explicit CPU
 architecture, without cross-architecture fallback; Linux ARM64 and x86_64 are
-kept distinct, while unsupported combinations fail closed. Five standalone
-selection tests pass against asset names observed in the corresponding upstream
-releases. The full desktop application has not been compiled or run after this
+kept distinct, while unsupported combinations fail closed. Update checks try
+the installer's ordered candidates for that architecture and reject assets
+without a well-formed SHA-256 or a valid size. Seven standalone tests, including
+the actual architecture dispatcher, pass against asset names observed in the
+corresponding upstream releases. The full desktop application has not been compiled or run after this
 change; actual downloads, executable verification, engine startup, and native
 macOS behavior still require independent validation. Existing user permissions and
 upstream attribution remain unchanged.
