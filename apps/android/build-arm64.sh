@@ -42,11 +42,28 @@ so="$CARGO_TARGET_DIR/aarch64-linux-android/release/libvp_client_android.so"
 "$toolchain/llvm-nm" -D --defined-only "$so" | grep -Eq '[[:space:]]ANativeActivity_onCreate$' || { echo "NativeActivity entry missing" >&2; exit 1; }
 mkdir -p "$work/jni/arm64-v8a"
 cp "$so" "$work/jni/arm64-v8a/libvp_client_android.so"
-"$script_dir/gradlew" -p "$script_dir" --project-cache-dir "$work/project-cache" \
-    -PvpNativeLibDir="$work/jni" -PvpBuildDir="$work/app-build" assembleDebug
+set -- -p "$script_dir" --project-cache-dir "$work/project-cache" \
+    -PvpNativeLibDir="$work/jni" -PvpBuildDir="$work/app-build"
+if [ -n "${VP_EGUI_PRODUCT_ROOT:-}" ]; then
+    : "${VP_CORE_ADAPTER_SO:?Set VP_CORE_ADAPTER_SO to a reviewed arm64 vp_core adapter library}"
+    product=$(CDPATH= cd -- "$VP_EGUI_PRODUCT_ROOT" && pwd -P)
+    host_src="$product/flutter/packages/vp_runtime_android/android/src/main/cpp/vp_android_host.cpp"
+    [ -f "$host_src" ] && [ -f "$product/contracts/abi/vp_adapter.h" ] && [ -f "$VP_CORE_ADAPTER_SO" ] || { echo "Runtime sources or adapter missing" >&2; exit 2; }
+    "$toolchain/llvm-readelf" -h "$VP_CORE_ADAPTER_SO" | grep -Eq 'Machine:.*AArch64' || { echo "Adapter is not AArch64" >&2; exit 1; }
+    "$toolchain/aarch64-linux-android26-clang++" -shared -std=c++17 -fPIC -O2 -Wall -Wextra -Werror -static-libstdc++ \
+        -Wl,-z,max-page-size=16384 -Wl,-z,relro,-z,now -I"$product/contracts/abi" "$host_src" -ldl -o "$work/jni/arm64-v8a/libvp_android_host.so"
+    cp "$VP_CORE_ADAPTER_SO" "$work/jni/arm64-v8a/libvp_product_core_adapter.so"
+    set -- "$@" -PvpEguiRuntimeRoot="$product"
+fi
+"$script_dir/gradlew" "$@" assembleDebug
 apk="$work/app-build/outputs/apk/debug/app-debug.apk"
 [ -f "$apk" ] || { echo "Gradle did not produce the expected APK" >&2; exit 1; }
 unzip -p "$apk" lib/arm64-v8a/libvp_client_android.so | cmp -s - "$so" || { echo "APK native library mismatch" >&2; exit 1; }
+if [ -n "${VP_EGUI_PRODUCT_ROOT:-}" ]; then
+    for lib in libvp_android_host.so libvp_product_core_adapter.so; do
+        unzip -p "$apk" "lib/arm64-v8a/$lib" | cmp -s - "$work/jni/arm64-v8a/$lib" || { echo "APK $lib mismatch" >&2; exit 1; }
+    done
+fi
 cp "$so" "$so_out"
 cp "$apk" "$apk_out"
 echo "Built $apk_out and $so_out. Device and VPN verification remain required."

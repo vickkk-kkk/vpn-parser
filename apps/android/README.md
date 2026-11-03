@@ -49,6 +49,14 @@ directory, checks AArch64, the NativeActivity entry and byte-for-byte APK
 contents, and never installs an SDK or changes the existing Gradle cache.
 The script has not yet run end-to-end on an Android build host.
 
+An experimental native host can be included by setting `VP_EGUI_PRODUCT_ROOT`
+to the unified product checkout and `VP_CORE_ADAPTER_SO` to an independently
+reviewed AArch64 `libvp_product_core_adapter.so` built from its matching source.
+The script then compiles the product's JNI host and adds the Kotlin/manifest
+module. It verifies the architecture and APK bytes of all three libraries.
+This optional variant changes Android permissions and has not been built or
+run; the egui UI does not yet invoke the bridge, and this is not a working VPN.
+
 The application intentionally has no INTERNET permission, VPN service,
 VpnService consent request, embedded engine, downloader, process runner, desktop
 system-proxy integration or background service. Configuration drafts are memory-only.

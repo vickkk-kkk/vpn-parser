@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Local parsing shell: no network/VPN permission or service is registered. -->
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
-    <application android:label="VPN Parser" android:hasCode="false"
+    <application android:label="VPN Parser" android:hasCode="${vpHasCode}"
         android:allowBackup="false" android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name="android.app.NativeActivity" android:exported="true"
