@@ -3,7 +3,7 @@ use crate::{
     fonts,
     import::{display_text, ImportState},
     preview::{ConfigPreview, ENGINES, TEMPLATE_NOTICE},
-    runtime::{parse_dns, RuntimeError, RuntimeHost},
+    runtime::{parse_dns, RuntimeError, RuntimeHost, RuntimeObservation},
     theme,
 };
 use eframe::egui::{self, RichText};
@@ -43,6 +43,8 @@ pub struct MobileApp {
     runtime_dns: String,
     runtime_prepared: bool,
     runtime_message: &'static str,
+    runtime_observation: RuntimeObservation,
+    runtime_last_observed: Option<std::time::Instant>,
 }
 impl MobileApp {
     pub fn new(
@@ -80,6 +82,8 @@ impl MobileApp {
             runtime_dns: String::new(),
             runtime_prepared: false,
             runtime_message: "尚未准备连接。",
+            runtime_observation: RuntimeObservation::Unavailable,
+            runtime_last_observed: None,
         }
     }
 
@@ -495,12 +499,29 @@ impl MobileApp {
 }
 impl eframe::App for MobileApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(runtime) = self.runtime.as_mut() {
+            if self.runtime_last_observed.map(|at| at.elapsed() >= std::time::Duration::from_secs(2)).unwrap_or(true) {
+                self.runtime_observation = runtime.observe();
+                self.runtime_last_observed = Some(std::time::Instant::now());
+            }
+            ctx.request_repaint_after(std::time::Duration::from_secs(2));
+        }
+        let runtime_label = match self.runtime_observation {
+            RuntimeObservation::Unavailable => "原生组件不可用或无状态",
+            RuntimeObservation::Idle => "原生组件报告空闲",
+            RuntimeObservation::Starting => "正在启动，尚未验证",
+            RuntimeObservation::Verifying => "正在验证，尚未确认连接",
+            RuntimeObservation::ReportedActive => "内核报告活跃；转发和 DNS 未独立验证",
+            RuntimeObservation::Stopping => "正在停止",
+            RuntimeObservation::Failed => "原生组件报告失败",
+            RuntimeObservation::Stale => "原生状态已过期，无法确认连接",
+        };
         egui::TopBottomPanel::top("status").show(ctx, |ui| {
             ui.add_space(8.0);
             ui.heading("VPN Parser");
             ui.colored_label(
                 theme::palette_for(theme::DEFAULT_THEME, self.dark).warning,
-                if self.runtime.is_some() { "原生实验组件已绑定；连接状态未验证" } else { "Tunnel unavailable · no native engine bound" },
+                if self.runtime.is_some() { runtime_label } else { "Tunnel unavailable · no native engine bound" },
             );
             if self.runtime.is_none() { ui.add_enabled(false, egui::Button::new("Connect unavailable")); }
             ui.add_space(4.0);

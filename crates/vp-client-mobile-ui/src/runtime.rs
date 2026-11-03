@@ -4,10 +4,14 @@ use std::net::SocketAddr;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeError { Unavailable, Unsupported, InvalidInput, PermissionRequired, Failed }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuntimeObservation { Unavailable, Idle, Starting, Verifying, ReportedActive, Stopping, Failed, Stale }
+
 /// Implementations own and erase their staged secrets, and must preflight the
 /// exact configuration before consent and before starting. No implicit fallback.
 pub trait RuntimeHost {
     fn available(&mut self) -> bool;
+    fn observe(&mut self) -> RuntimeObservation;
     fn prepare(&mut self, raw_uri: &str, node_id: &str, bootstrap: &[SocketAddr], user_dns: &[SocketAddr]) -> Result<(), RuntimeError>;
     fn request_consent(&mut self) -> Result<(), RuntimeError>;
     fn consent_granted(&mut self) -> bool;
