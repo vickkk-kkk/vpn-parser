@@ -3019,6 +3019,9 @@ impl VpnApp {
 
     /// 「预备」状态下自己把缺的内核下载下来，下载方式用他设置里记着的那个。
     pub(crate) fn maybe_auto_prepare(&mut self) {
+        if !crate::diag::automatic_asset_downloads_allowed(crate::diag::enabled()) {
+            return;
+        }
         let proxy_active = matches!(
             self.proxy_status.state,
             ProxyState::Running | ProxyState::Degraded | ProxyState::Starting
@@ -3072,6 +3075,9 @@ impl VpnApp {
 
     /// 新安装或缺少分流数据库时，在程序启动后自动于后台极速拉取完整的 GeoIP / GeoSite 规则文件。
     pub(crate) fn maybe_auto_download_geo(&mut self) {
+        if !crate::diag::automatic_asset_downloads_allowed(crate::diag::enabled()) {
+            return;
+        }
         if self.geo_auto_attempted || self.geo_updating {
             return;
         }

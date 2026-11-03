@@ -115,6 +115,13 @@ jobs:
             rm -rf "${ICONSET}"
           fi
 
+          # Re-seal the final bundle after all binary and resource changes.
+          # Ad-hoc signing is an integrity measure for this build, not Developer
+          # ID signing, notarization, or a claim of a trusted distribution.
+          codesign --force --sign - --timestamp=none "${APP_DIR}"
+          codesign --verify --strict --verbose=2 "${APP_DIR}"
+          codesign --verify --strict --verbose=2 "${APP_DIR}/Contents/MacOS/vpn-parser"
+
           # 5. 生成 DMG 安装包
           DMG_STAGING="dmg_staging"
           rm -rf "${DMG_STAGING}"

@@ -409,7 +409,7 @@ fn main() -> Result<()> {
             });
         }
         // 新安装如果缺少 Geo 分流规则库，在后台异步预先拉取（Fastly CDN 2秒就绪）
-        {
+        if crate::diag::automatic_asset_downloads_allowed(crate::diag::enabled()) {
             let geo_dir = crate::geo::mihomo_dir();
             if !crate::geo::geo_ready(&geo_dir) {
                 rt.spawn(async move {

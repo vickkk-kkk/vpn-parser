@@ -17,6 +17,14 @@ builds and device execution require a separately reviewed environment. Package
 IDs are development placeholders, not an established release/signing identity.
 The source pins AGP 8.7.3, SDK 35 and min SDK 26; these have not been exercised.
 
+The independent Android workspace has its own checked-in `Cargo.lock`, generated
+from the current manifest rather than copied from an earlier validation run.
+The lock was regenerated without change using Cargo 1.88 offline. Offline
+metadata/build remains blocked here by missing crate sources, and the arm64
+target has not been compiled. On a prepared Android build machine, start with
+`cargo build --locked --release --target aarch64-linux-android --manifest-path apps/android/Cargo.toml`
+and verify the lock remains unchanged; a successful build is still not an APK.
+
 The application intentionally has no INTERNET permission, VPN service,
 VpnService consent request, embedded engine, downloader, process runner, desktop
 system-proxy integration or background service. Configuration drafts are memory-only.

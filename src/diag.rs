@@ -29,6 +29,12 @@ pub fn enabled() -> bool {
     *CACHED.get_or_init(|| enabled_from_value(std::env::var(FLAG).ok().as_deref()))
 }
 
+/// The diagnostic shell does not automatically provision network assets.
+/// This is not a general network sandbox for explicit user actions.
+pub fn automatic_asset_downloads_allowed(diagnostic: bool) -> bool {
+    !diagnostic
+}
+
 /// 诊断实例的工作目录：`%TEMP%\vpn-parser-diag-<pid>`。启动时把 cwd 切到这里，
 /// `--db` 的默认相对路径、`startup.log`、`panic.log`、`data/kernels` 就全都隔离了
 /// —— 一个改动都不用碰 D 盘那份真实数据。
@@ -141,6 +147,12 @@ mod tests {
         for off in [None, Some(""), Some("0"), Some("yes"), Some("false")] {
             assert!(!enabled_from_value(off), "{off:?}");
         }
+    }
+
+    #[test]
+    fn automatic_asset_downloads_are_disabled_only_in_diagnostic_mode() {
+        assert!(!automatic_asset_downloads_allowed(true));
+        assert!(automatic_asset_downloads_allowed(false));
     }
 
     #[test]
