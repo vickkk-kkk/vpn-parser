@@ -34,6 +34,9 @@ pub fn parse_uri(
     if lower.starts_with("trojan://") {
         return parse_trojan(&uri, source_id, metadata);
     }
+    if lower.starts_with("anytls://") {
+        return parse_anytls(&uri, source_id, metadata);
+    }
     if lower.starts_with("tuic://") {
         return parse_tuic(&uri, source_id, metadata);
     }
@@ -376,6 +379,42 @@ fn trojan_node(
         "allowInsecure": json!(false),
     });
     make_node("trojan", name, host, port, uri, config, source_id, metadata)
+}
+
+/// The documented AnyTLS URI subset with authenticated TLS. Unknown options,
+/// malformed escaping and insecure TLS are rejected rather than discarded.
+fn parse_anytls(uri: &str, source_id: Option<&str>, metadata: &mut impl super::NodeMetadataProvider) -> Option<Node> {
+    let bytes = uri.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len() || !bytes[i + 1].is_ascii_hexdigit() || !bytes[i + 2].is_ascii_hexdigit() { return None; }
+            i += 3;
+        } else { i += 1; }
+    }
+    let url = Url::parse(uri).ok()?;
+    if url.password().is_some() || !matches!(url.path(), "" | "/") { return None; }
+    let decode = |s: &str| percent_encoding::percent_decode_str(s).decode_utf8().ok().map(|v| v.into_owned());
+    let password = decode(url.username())?;
+    if password.is_empty() || password.contains('\0') { return None; }
+    let host = url.host_str()?.to_string();
+    let port = url.port().unwrap_or(443);
+    if port == 0 { return None; }
+    let name = match url.fragment() { Some(fragment) => decode(fragment)?, None => String::new() };
+    if name.contains('\0') { return None; }
+    let mut sni = String::new();
+    let (mut seen_sni, mut seen_insecure) = (false, false);
+    for (key, value) in url.query_pairs() {
+        if key.contains('\u{fffd}') || value.contains('\u{fffd}') || value.contains('\0') { return None; }
+        match key.as_ref() {
+            "sni" if !seen_sni && !value.is_empty() => { seen_sni = true; sni = value.into_owned(); }
+            "insecure" if !seen_insecure && value == "0" => { seen_insecure = true; }
+            _ => return None,
+        }
+    }
+    let config = json!({"type":"anytls", "server":host, "port":port, "password":password,
+        "name":name, "sni":sni, "insecure":false});
+    Some(make_node("anytls", &name, &host, port, uri, config, source_id, metadata))
 }
 
 fn parse_hysteria2(

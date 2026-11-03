@@ -147,3 +147,10 @@ corresponding upstream releases. The full desktop application has not been compi
 change; actual downloads, executable verification, engine startup, and native
 macOS behavior still require independent validation. Existing user permissions and
 upstream attribution remain unchanged.
+
+AnyTLS URI import now recognizes the documented password, optional SNI, port and
+label subset. It rejects insecure TLS, malformed escapes, duplicate or unknown
+parameters and empty credentials rather than silently changing security settings.
+The actual parsing function passed two isolated tests using synthetic values;
+the full Cargo integration tests and all engine runtime interoperability remain
+unverified. Importing a node does not establish a working VPN.

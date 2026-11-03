@@ -12,6 +12,28 @@ fn metadata() -> impl NodeMetadataProvider {
         }
     }
 }
+
+#[test]
+fn anytls_uri_import_preserves_credentials_and_verified_tls() {
+    let nodes = parse_subscription("anytls://p%40ss@proxy.example?sni=tls.example&insecure=0#My%20node", None, &mut metadata());
+    assert_eq!(nodes.len(), 1);
+    let n = &nodes[0];
+    assert_eq!(n.protocol, "anytls");
+    assert_eq!(n.port, 443);
+    assert_eq!(n.name, "My node");
+    assert_eq!(n.config["password"], "p@ss");
+    assert_eq!(n.config["sni"], "tls.example");
+    assert_eq!(n.config["insecure"], false);
+}
+
+#[test]
+fn anytls_uri_rejects_unsafe_or_unrecognized_options() {
+    for uri in ["anytls://p@proxy.example?insecure=1", "anytls://p@proxy.example?unknown=x",
+        "anytls://p@proxy.example?sni=a&sni=b", "anytls://p%ZZ@proxy.example",
+        "anytls://p%00@proxy.example", "anytls://p@proxy.example:0", "anytls://@proxy.example"] {
+        assert!(parse_uri(uri, None, &mut metadata()).is_none(), "unexpectedly accepted: {uri}");
+    }
+}
 fn dat(categories: &[&str]) -> Vec<u8> {
     categories
         .iter()
