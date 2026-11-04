@@ -59,6 +59,7 @@ use std::time::Duration;
             enabled: true,
             server: Some("127.0.0.1:9980".into()),
             override_list: Some("<local>;localhost".into()),
+            macos: None,
         };
         let cleaned = sanitize_self_referential(leftover, "127.0.0.1:9980");
         assert!(!cleaned.enabled);
@@ -70,6 +71,7 @@ use std::time::Duration;
             enabled: true,
             server: Some("127.0.0.1:10808".into()),
             override_list: None,
+            macos: None,
         };
         let kept = sanitize_self_referential(users.clone(), "127.0.0.1:9980");
         assert_eq!(kept, users);
@@ -79,6 +81,7 @@ use std::time::Duration;
             enabled: true,
             server: Some("http=127.0.0.1:9980;https=127.0.0.1:9980".into()),
             override_list: None,
+            macos: None,
         };
         assert!(!sanitize_self_referential(grouped, "127.0.0.1:9980").enabled);
 
@@ -87,6 +90,7 @@ use std::time::Duration;
             enabled: false,
             server: Some("127.0.0.1:9980".into()),
             override_list: None,
+            macos: None,
         };
         assert!(!sanitize_self_referential(off.clone(), "127.0.0.1:9980").enabled);
         assert_eq!(
@@ -156,6 +160,7 @@ use std::time::Duration;
                 enabled: false,
                 server: Some("old-proxy:8080".into()),
                 override_list: Some("<local>".into()),
+                macos: None,
             })
         }
 
@@ -1032,6 +1037,7 @@ use std::time::Duration;
             enabled: false,
             server: Some("old-proxy:8080".into()),
             override_list: Some("<local>".into()),
+            macos: None,
         };
         {
             let mut runtime = manager.runtime.lock().await;

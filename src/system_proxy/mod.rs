@@ -16,7 +16,32 @@ pub struct SystemProxySnapshot {
     pub enabled: bool,
     pub server: Option<String>,
     pub override_list: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub macos: Option<MacosProxySnapshot>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MacosProxySnapshot {
+    pub service: String,
+    pub web: MacosProxyEndpoint,
+    pub secure_web: MacosProxyEndpoint,
+    #[serde(default)]
+    pub managed_server: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MacosProxyEndpoint {
+    pub enabled: bool,
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Debug)]
+pub struct ProxyUnchanged(pub &'static str);
+impl std::fmt::Display for ProxyUnchanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(self.0) }
+}
+impl std::error::Error for ProxyUnchanged {}
 
 pub trait SystemProxyControl: Send + Sync {
     /// 这个平台到底有没有"系统代理"这个可写的位置。Windows 有（WinINET 注册表），
@@ -30,6 +55,9 @@ pub trait SystemProxyControl: Send + Sync {
 
     fn capture(&self) -> Result<SystemProxySnapshot>;
     fn enable(&self, server: &str) -> Result<()>;
+    fn enable_with_snapshot(&self, server: &str, _snapshot: &SystemProxySnapshot) -> Result<()> {
+        self.enable(server)
+    }
     fn restore(&self, snapshot: &SystemProxySnapshot) -> Result<()>;
 }
 
@@ -62,6 +90,7 @@ impl SystemProxyControl for PlatformSystemProxy {
             enabled,
             server: query_reg_value("ProxyServer"),
             override_list: query_reg_value("ProxyOverride"),
+            macos: None,
         })
     }
 
@@ -95,85 +124,111 @@ impl SystemProxyControl for PlatformSystemProxy {
 }
 
 #[cfg(target_os = "macos")]
+fn macos_networksetup(args: &[&str]) -> Result<String> {
+    let output = Command::new("/usr/sbin/networksetup").args(args).output()?;
+    if !output.status.success() {
+        return Err(anyhow!("networksetup command failed: {}", args[0]));
+    }
+    String::from_utf8(output.stdout).map_err(|_| anyhow!("invalid networksetup output"))
+}
+
+// No authentication secret is exposed by networksetup, so such settings cannot
+// be restored faithfully. Refuse to modify them rather than silently lose them.
+fn parse_macos_proxy_endpoint(text: &str) -> Result<MacosProxyEndpoint> {
+    fn value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+        text.lines().filter_map(|line| line.split_once(':'))
+            .find_map(|(name, value)| (name.trim() == key).then_some(value.trim()))
+    }
+    let enabled = match value(text, "Enabled") {
+        Some("Yes") => true, Some("No") => false,
+        _ => return Err(anyhow!("unrecognized macOS proxy state")),
+    };
+    match value(text, "Authenticated Proxy Enabled") {
+        Some("0") => (),
+        Some("1") => return Err(anyhow!("authenticated macOS proxy cannot be safely restored")),
+        _ => return Err(anyhow!("unknown macOS proxy authentication state")),
+    }
+    let host = value(text, "Server").ok_or_else(|| anyhow!("missing proxy server"))?.to_string();
+    let port: u16 = value(text, "Port").ok_or_else(|| anyhow!("missing proxy port"))?
+        .parse().map_err(|_| anyhow!("invalid proxy port"))?;
+    if enabled && (host.is_empty() || port == 0) { return Err(anyhow!("enabled proxy has no endpoint")); }
+    Ok(MacosProxyEndpoint { enabled, host, port })
+}
+
+// Only restore an endpoint still matching our managed address or its original
+// value. Changes made by another program to a different address are left alone.
+fn macos_restore_allowed(current: &MacosProxyEndpoint, original: &MacosProxyEndpoint, managed: Option<&str>) -> bool {
+    current == original || (current.enabled
+        && managed.is_some_and(|server| format!("{}:{}", current.host, current.port) == server))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_restore_checked(service: &str, endpoint: &MacosProxyEndpoint, managed: Option<&str>, secure: bool) -> Result<()> {
+    let get = if secure { "-getsecurewebproxy" } else { "-getwebproxy" };
+    let current = parse_macos_proxy_endpoint(&macos_networksetup(&[get, service])?)?;
+    if current == *endpoint { return Ok(()); }
+    if !macos_restore_allowed(&current, endpoint, managed) {
+        return Err(anyhow!("proxy changed externally; original settings were not applied"));
+    }
+    macos_restore_endpoint(service, endpoint, secure)
+}
+
+fn macos_restore_endpoint_with<F>(service: &str, endpoint: &MacosProxyEndpoint, secure: bool, mut run: F) -> Result<()>
+where F: FnMut(&[&str]) -> Result<()> {
+    let (set, state) = if secure { ("-setsecurewebproxy", "-setsecurewebproxystate") }
+                       else { ("-setwebproxy", "-setwebproxystate") };
+    // Empty disabled endpoints cannot be recreated with networksetup. Restore
+    // the disabled state, but do not claim their hidden fields were restored.
+    if !endpoint.host.is_empty() && endpoint.port != 0 {
+        run(&[set, service, &endpoint.host, &endpoint.port.to_string()])?;
+    } else if endpoint.enabled { return Err(anyhow!("missing prior proxy endpoint")); }
+    run(&[state, service, if endpoint.enabled { "on" } else { "off" }])?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_restore_endpoint(service: &str, endpoint: &MacosProxyEndpoint, secure: bool) -> Result<()> {
+    macos_restore_endpoint_with(service, endpoint, secure, |args| macos_networksetup(args).map(|_| ()))
+}
+
+#[cfg(target_os = "macos")]
 impl SystemProxyControl for PlatformSystemProxy {
     fn capture(&self) -> Result<SystemProxySnapshot> {
-        let service = macos_primary_network_service().unwrap_or_else(|| "Wi-Fi".to_string());
-        let output = Command::new("networksetup")
-            .args(["-getwebproxy", &service])
-            .output()?;
-        let text = String::from_utf8_lossy(&output.stdout);
-        let enabled = text.lines().any(|l| l.contains("Enabled: Yes"));
-        let server = text.lines().find_map(|l| {
-            if l.starts_with("Server: ") {
-                let s = l.trim_start_matches("Server: ").trim();
-                if !s.is_empty() {
-                    Some(s.to_string())
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        });
-        Ok(SystemProxySnapshot {
-            enabled,
-            server,
-            override_list: None,
-        })
+        let service = macos_primary_network_service().ok_or_else(|| anyhow!("cannot identify primary network service"))?;
+        let web = parse_macos_proxy_endpoint(&macos_networksetup(&["-getwebproxy", &service])?)?;
+        let secure_web = parse_macos_proxy_endpoint(&macos_networksetup(&["-getsecurewebproxy", &service])?)?;
+        let server = if web.host.is_empty() || web.port == 0 { None } else {
+            Some(format!("{}:{}", web.host, web.port))
+        };
+        Ok(SystemProxySnapshot { enabled: web.enabled, server, override_list: None,
+            macos: Some(MacosProxySnapshot { service, web, secure_web, managed_server: None }) })
     }
-
-    fn enable(&self, server: &str) -> Result<()> {
-        if crate::diag::enabled() {
-            return Err(anyhow!(crate::diag::BLOCKED));
+    fn enable(&self, _server: &str) -> Result<()> {
+        Err(anyhow!("macOS proxy enable requires a captured snapshot"))
+    }
+    fn enable_with_snapshot(&self, server: &str, snapshot: &SystemProxySnapshot) -> Result<()> {
+        if crate::diag::enabled() { return Err(ProxyUnchanged(crate::diag::BLOCKED).into()); }
+        let (host, port) = parse_host_port(server).map_err(|_| ProxyUnchanged("invalid proxy endpoint"))?;
+        if host.is_empty() || port == 0 { return Err(ProxyUnchanged("invalid proxy endpoint").into()); }
+        let service = &snapshot.macos.as_ref().ok_or(ProxyUnchanged("missing macOS proxy snapshot"))?.service;
+        if macos_primary_network_service().as_ref() != Some(service) {
+            return Err(ProxyUnchanged("primary network service changed since proxy capture").into());
         }
-        let (host, port) = parse_host_port(server)?;
-        let service = macos_primary_network_service().unwrap_or_else(|| "Wi-Fi".to_string());
-        let _ = Command::new("networksetup")
-            .args(["-setwebproxy", &service, &host, &port.to_string()])
-            .output();
-        let _ = Command::new("networksetup")
-            .args(["-setsecurewebproxy", &service, &host, &port.to_string()])
-            .output();
-        let _ = Command::new("networksetup")
-            .args(["-setwebproxystate", &service, "on"])
-            .output();
-        let _ = Command::new("networksetup")
-            .args(["-setsecurewebproxystate", &service, "on"])
-            .output();
+        let port = port.to_string();
+        for args in [
+            ["-setwebproxy", service.as_str(), host.as_str(), port.as_str()],
+            ["-setsecurewebproxy", service.as_str(), host.as_str(), port.as_str()],
+        ] { macos_networksetup(&args)?; }
+        macos_networksetup(&["-setwebproxystate", service, "on"])?;
+        macos_networksetup(&["-setsecurewebproxystate", service, "on"])?;
         Ok(())
     }
-
     fn restore(&self, snapshot: &SystemProxySnapshot) -> Result<()> {
-        if crate::diag::enabled() {
-            return Err(anyhow!(crate::diag::BLOCKED));
-        }
-        let service = macos_primary_network_service().unwrap_or_else(|| "Wi-Fi".to_string());
-        if snapshot.enabled {
-            if let Some(server) = &snapshot.server {
-                if let Ok((host, port)) = parse_host_port(server) {
-                    let _ = Command::new("networksetup")
-                        .args(["-setwebproxy", &service, &host, &port.to_string()])
-                        .output();
-                    let _ = Command::new("networksetup")
-                        .args(["-setsecurewebproxy", &service, &host, &port.to_string()])
-                        .output();
-                    let _ = Command::new("networksetup")
-                        .args(["-setwebproxystate", &service, "on"])
-                        .output();
-                    let _ = Command::new("networksetup")
-                        .args(["-setsecurewebproxystate", &service, "on"])
-                        .output();
-                    return Ok(());
-                }
-            }
-        }
-        let _ = Command::new("networksetup")
-            .args(["-setwebproxystate", &service, "off"])
-            .output();
-        let _ = Command::new("networksetup")
-            .args(["-setsecurewebproxystate", &service, "off"])
-            .output();
-        Ok(())
+        if crate::diag::enabled() { return Err(anyhow!(crate::diag::BLOCKED)); }
+        let original = snapshot.macos.as_ref().ok_or_else(|| anyhow!("incomplete macOS proxy snapshot; cannot safely restore"))?;
+        let web = macos_restore_checked(&original.service, &original.web, original.managed_server.as_deref(), false);
+        let secure = macos_restore_checked(&original.service, &original.secure_web, original.managed_server.as_deref(), true);
+        web.and(secure)
     }
 }
 
@@ -225,6 +280,7 @@ impl SystemProxyControl for PlatformSystemProxy {
             enabled,
             server: Some(mode), // 使用 server 字段记录原有的 mode ('none', 'manual', 'auto')
             override_list: server,
+            macos: None,
         })
     }
 
@@ -314,6 +370,7 @@ fn macos_primary_network_service() -> Option<String> {
         .args(["-n", "get", "default"])
         .output()
         .ok()?;
+    if !output.status.success() { return None; }
     let text = String::from_utf8_lossy(&output.stdout);
     let interface = text.lines().find_map(|line| {
         let trimmed = line.trim();
@@ -328,21 +385,22 @@ fn macos_primary_network_service() -> Option<String> {
         .args(["-listnetworkserviceorder"])
         .output()
         .ok()?;
+    if !order_out.status.success() { return None; }
     let order_text = String::from_utf8_lossy(&order_out.stdout);
     let mut current_service = None;
     for line in order_text.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('(') && trimmed.contains("Hardware Port:") {
-            if trimmed.contains(&format!("Device: {interface}")) {
-                return current_service;
-            }
+            let device = trimmed.trim_end_matches(')').split(',')
+                .find_map(|part| part.trim().strip_prefix("Device:").map(str::trim));
+            if device == Some(interface.as_str()) { return current_service; }
         } else if trimmed.starts_with('(') {
             if let Some(pos) = trimmed.find(')') {
                 current_service = Some(trimmed[pos + 1..].trim().to_string());
             }
         }
     }
-    current_service.or_else(|| Some("Wi-Fi".to_string()))
+    None
 }
 
 /// 读取 Windows 系统代理（v2rayN/Clash 等工具会写这里），返回 `http://host:port`。
@@ -779,11 +837,47 @@ pub fn direct_disable_wininet_proxy_atomic() -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn parses_macos_proxy_snapshots_and_rejects_unrestorable_states() {
+        let web = "Enabled: Yes\nServer: example.test\nPort: 8080\nAuthenticated Proxy Enabled: 0\n";
+        assert_eq!(parse_macos_proxy_endpoint(web).unwrap(), MacosProxyEndpoint {
+            enabled: true, host: "example.test".into(), port: 8080,
+        });
+        let disabled = "Enabled: No\nServer: \nPort: 0\nAuthenticated Proxy Enabled: 0\n";
+        assert!(!parse_macos_proxy_endpoint(disabled).unwrap().enabled);
+        assert!(parse_macos_proxy_endpoint(&web.replace("Enabled: 0", "Enabled: 1")).is_err());
+        assert!(parse_macos_proxy_endpoint("Enabled: Yes\nServer: \nPort: 0\nAuthenticated Proxy Enabled: 0").is_err());
+        assert!(parse_macos_proxy_endpoint("Enabled: Unknown\n").is_err());
+    }
+
+    #[test]
+    fn macos_restore_commands_fail_closed_and_preserve_protocols() {
+        let web = MacosProxyEndpoint { enabled: true, host: "proxy.test".into(), port: 8080 };
+        let secure = MacosProxyEndpoint { enabled: false, host: "other.test".into(), port: 8443 };
+        let mut calls = Vec::new();
+        macos_restore_endpoint_with("Wi-Fi", &web, false, |args| { calls.push(args.iter().map(|s| s.to_string()).collect::<Vec<_>>()); Ok(()) }).unwrap();
+        macos_restore_endpoint_with("Wi-Fi", &secure, true, |args| { calls.push(args.iter().map(|s| s.to_string()).collect::<Vec<_>>()); Ok(()) }).unwrap();
+        assert_eq!(calls[0], vec!["-setwebproxy", "Wi-Fi", "proxy.test", "8080"]);
+        assert_eq!(calls[1], vec!["-setwebproxystate", "Wi-Fi", "on"]);
+        assert_eq!(calls[3], vec!["-setsecurewebproxystate", "Wi-Fi", "off"]);
+        let mut attempts = 0;
+        assert!(macos_restore_endpoint_with("Wi-Fi", &web, false, |_| { attempts += 1; Err(anyhow!("synthetic failure")) }).is_err());
+        assert_eq!(attempts, 1);
+        let managed = MacosProxyEndpoint { enabled: true, host: "127.0.0.1".into(), port: 9980 };
+        assert!(macos_restore_allowed(&managed, &web, Some("127.0.0.1:9980")));
+        assert!(!macos_restore_allowed(&secure, &web, Some("127.0.0.1:9980")));
+        let partially_restored = MacosProxyEndpoint { enabled: true, ..secure.clone() };
+        assert!(!macos_restore_allowed(&partially_restored, &secure, Some("127.0.0.1:9980")));
+        let manually_disabled = MacosProxyEndpoint { enabled: false, ..managed.clone() };
+        assert!(!macos_restore_allowed(&manually_disabled, &web, Some("127.0.0.1:9980")));
+    }
+
     fn snap(enabled: bool, server: Option<&str>) -> SystemProxySnapshot {
         SystemProxySnapshot {
             enabled,
             server: server.map(str::to_string),
             override_list: None,
+            macos: None,
         }
     }
 

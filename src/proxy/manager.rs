@@ -211,6 +211,9 @@ impl ProxyManager {
     pub async fn rearm_system_proxy(&self) -> Result<String> {
         let _operation = self.operation.lock().await;
         let mut runtime = self.runtime.lock().await;
+        if cfg!(target_os = "macos") && runtime.system_proxy_snapshot.is_some() {
+            return Err(anyhow!("已有系统代理快照，须先恢复后才能重新接管"));
+        }
         if !runtime.options.mode.has_system() {
             return Err(anyhow::anyhow!("当前未启用系统代理，不写注册表"));
         }
@@ -219,8 +222,10 @@ impl ProxyManager {
             .options
             .terminal_proxy
             .then_some(runtime.options.mixed_port);
-        let snapshot =
-            activate_system_proxy(self.system_proxy.clone(), server.clone(), terminal_port).await?;
+        let snapshot = match activate_system_proxy(self.system_proxy.clone(), server.clone(), terminal_port).await {
+            Ok(snapshot) => snapshot,
+            Err(error) => { if let Some(snapshot) = failed_proxy_snapshot(&error) { runtime.system_proxy_snapshot = Some(snapshot); } return Err(error); }
+        };
         runtime.system_proxy_snapshot = Some(snapshot);
         Ok(format!("已把系统代理写回 {server}"))
     }
@@ -231,13 +236,18 @@ impl ProxyManager {
         let mut runtime = self.runtime.lock().await;
         let port = runtime.options.mixed_port;
         if enable {
+            if cfg!(target_os = "macos") && runtime.system_proxy_snapshot.is_some() {
+                return Err(anyhow!("已有系统代理快照，须先恢复后才能再次开启"));
+            }
             let server = format!("127.0.0.1:{port}");
             let terminal_port = runtime
                 .options
                 .terminal_proxy
                 .then_some(port);
-            let snapshot =
-                activate_system_proxy(self.system_proxy.clone(), server.clone(), terminal_port).await?;
+            let snapshot = match activate_system_proxy(self.system_proxy.clone(), server.clone(), terminal_port).await {
+                Ok(snapshot) => snapshot,
+                Err(error) => { if let Some(snapshot) = failed_proxy_snapshot(&error) { runtime.system_proxy_snapshot = Some(snapshot); } return Err(error); }
+            };
             runtime.system_proxy_snapshot = Some(snapshot);
             runtime.status.system_proxy_enabled = true;
             let tun_on = runtime.options.mode.has_tun();
@@ -246,10 +256,11 @@ impl ProxyManager {
             tracing::info!(port, "系统代理免停热开启成功");
             Ok(format!("系统代理已即时开启 (指向 {server})，未重启内核"))
         } else {
-            if let Some(snapshot) = runtime.system_proxy_snapshot.take() {
-                let _ = restore_system_proxy(self.system_proxy.clone(), snapshot, false).await;
-            } else {
-                let _ = crate::system_proxy::direct_disable_wininet_proxy_atomic();
+            if let Some(snapshot) = runtime.system_proxy_snapshot.clone() {
+                restore_system_proxy(self.system_proxy.clone(), snapshot, false).await?;
+                runtime.system_proxy_snapshot = None;
+            } else if !crate::system_proxy::direct_disable_wininet_proxy_atomic() {
+                return Err(anyhow!("缺少原系统代理快照，无法确认恢复"));
             }
             runtime.status.system_proxy_enabled = false;
             let tun_on = runtime.options.mode.has_tun();
@@ -489,6 +500,7 @@ impl ProxyManager {
     ///   由调用方回退整进程重启。
     /// 返回 Ok(true) = 热切换已生效；Ok(false) = 内核不支持或热切换失败（可安全回退重启）。
     pub async fn try_hot_toggle_tun(&self, mut options: MihomoConfigOptions) -> Result<bool> {
+        let _operation = self.operation.lock().await;
         options.validate()?;
         let started = tokio::time::Instant::now();
         let tun_on = options.mode.has_tun();
@@ -633,15 +645,21 @@ impl ProxyManager {
         if options.mode.has_system() && runtime.system_proxy_snapshot.is_none() {
             let server = format!("127.0.0.1:{}", runtime.options.mixed_port);
             let terminal_port = runtime.options.terminal_proxy.then_some(runtime.options.mixed_port);
-            if let Ok(snapshot) = activate_system_proxy(self.system_proxy.clone(), server, terminal_port).await {
-                runtime.system_proxy_snapshot = Some(snapshot);
-                runtime.status.system_proxy_enabled = true;
+            match activate_system_proxy(self.system_proxy.clone(), server, terminal_port).await {
+                Ok(snapshot) => { runtime.system_proxy_snapshot = Some(snapshot); runtime.status.system_proxy_enabled = true; }
+                Err(error) => {
+                    if let Some(snapshot) = failed_proxy_snapshot(&error) { runtime.system_proxy_snapshot = Some(snapshot); }
+                    return Err(anyhow!("TUN 已切换，但系统代理启用失败: {error}"));
+                }
             }
         } else if !options.mode.has_system() && runtime.system_proxy_snapshot.is_some() {
-            if let Some(snapshot) = runtime.system_proxy_snapshot.take() {
-                let _ = restore_system_proxy(self.system_proxy.clone(), snapshot, false).await;
-            } else {
-                let _ = crate::system_proxy::direct_disable_wininet_proxy_atomic();
+            if let Some(snapshot) = runtime.system_proxy_snapshot.clone() {
+                if let Err(error) = restore_system_proxy(self.system_proxy.clone(), snapshot, false).await {
+                    let message = format!("TUN 已切换，但系统代理恢复失败: {error}");
+                    runtime.status.last_error = Some(message.clone());
+                    return Err(anyhow!(message));
+                }
+                runtime.system_proxy_snapshot = None;
             }
             runtime.status.system_proxy_enabled = false;
         }
@@ -894,6 +912,9 @@ impl ProxyManager {
         mut preserved_system_proxy_snapshot: Option<SystemProxySnapshot>,
     ) -> Result<()> {
         let mut runtime = self.runtime.lock().await;
+        if runtime.system_proxy_snapshot.is_some() {
+            return Err(anyhow!("系统代理仍有待恢复的快照，请先完成恢复后再启动"));
+        }
         if matches!(
             runtime.status.state,
             ProxyState::Starting | ProxyState::Running | ProxyState::Stopping
@@ -1276,6 +1297,7 @@ impl ProxyManager {
                 {
                     Ok(snapshot) => runtime.system_proxy_snapshot = Some(snapshot),
                     Err(error) => {
+                        if let Some(snapshot) = failed_proxy_snapshot(&error) { runtime.system_proxy_snapshot = Some(snapshot); }
                         let _ = child.kill().await;
                         let _ = child.wait().await;
                         let _ = work_dir.cleanup().await;
@@ -1448,15 +1470,17 @@ impl ProxyManager {
         }
         let preserved_snapshot = if restore_proxy {
             let had_snapshot = snapshot.is_some();
+            let mut failed_snapshot = None;
             if let Some(snapshot) = snapshot {
                 if let Err(error) = restore_system_proxy(
                     self.system_proxy.clone(),
-                    snapshot,
+                    snapshot.clone(),
                     options.terminal_proxy,
                 )
                 .await
                 {
                     errors.push(format!("恢复系统代理失败: {error}"));
+                    failed_snapshot = Some(snapshot);
                 }
             }
             #[cfg(windows)]
@@ -1466,13 +1490,13 @@ impl ProxyManager {
             if !had_snapshot && options.terminal_proxy {
                 tokio::task::spawn_blocking(crate::system_proxy::terminal::disable);
             }
-            None
+            failed_snapshot
         } else {
             snapshot
         };
 
         if !errors.is_empty() {
-            if let Some(snapshot) = preserved_snapshot.as_ref() {
+            if !restore_proxy { if let Some(snapshot) = preserved_snapshot.as_ref() {
                 if let Err(error) = restore_system_proxy(
                     self.system_proxy.clone(),
                     snapshot.clone(),
@@ -1482,9 +1506,10 @@ impl ProxyManager {
                 {
                     errors.push(format!("停止失败后恢复系统代理失败: {error}"));
                 }
-            }
+            }}
             let message = errors.join("；");
             let mut runtime = self.runtime.lock().await;
+            runtime.system_proxy_snapshot = preserved_snapshot;
             mark_failed(&mut runtime, message.clone());
             return Err(anyhow!(message));
         }
@@ -1889,15 +1914,32 @@ pub fn start_success_message(
     head
 }
 
+#[derive(Debug)]
+struct ProxyRollbackFailed {
+    snapshot: SystemProxySnapshot,
+    message: String,
+}
+impl std::fmt::Display for ProxyRollbackFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(&self.message) }
+}
+impl std::error::Error for ProxyRollbackFailed {}
+fn failed_proxy_snapshot(error: &anyhow::Error) -> Option<SystemProxySnapshot> {
+    error.downcast_ref::<ProxyRollbackFailed>().map(|failure| failure.snapshot.clone())
+}
+
 pub async fn activate_system_proxy(
     controller: Arc<dyn SystemProxyControl>,
     server: String,
     terminal_proxy_port: Option<u16>,
 ) -> Result<SystemProxySnapshot> {
     let snapshot = tokio::task::spawn_blocking(move || {
-        let snapshot = sanitize_self_referential(controller.capture()?, &server);
-        if let Err(error) = controller.enable(&server) {
-            let _ = controller.restore(&snapshot);
+        let mut snapshot = sanitize_self_referential(controller.capture()?, &server);
+        if let Some(ref mut macos) = snapshot.macos { macos.managed_server = Some(server.clone()); }
+        if let Err(error) = controller.enable_with_snapshot(&server, &snapshot) {
+            if error.is::<crate::system_proxy::ProxyUnchanged>() { return Err(error); }
+            if let Err(rollback) = controller.restore(&snapshot) {
+                return Err(ProxyRollbackFailed { snapshot, message: format!("系统代理启用失败: {error}; 恢复原设置也失败: {rollback}") }.into());
+            }
             return Err(error);
         }
         Ok(snapshot)
@@ -1915,7 +1957,16 @@ pub async fn activate_system_proxy(
     Ok(snapshot)
 }
 
-pub fn sanitize_self_referential(snapshot: SystemProxySnapshot, server: &str) -> SystemProxySnapshot {
+pub fn sanitize_self_referential(mut snapshot: SystemProxySnapshot, server: &str) -> SystemProxySnapshot {
+    if let Some(ref mut macos) = snapshot.macos {
+        for endpoint in [&mut macos.web, &mut macos.secure_web] {
+            if endpoint.enabled && format!("{}:{}", endpoint.host, endpoint.port) == server.trim() {
+                endpoint.enabled = false;
+            }
+        }
+        snapshot.enabled = macos.web.enabled;
+        return snapshot;
+    }
     let points_at_us = snapshot.enabled
         && snapshot
             .server
@@ -1930,6 +1981,7 @@ pub fn sanitize_self_referential(snapshot: SystemProxySnapshot, server: &str) ->
             enabled: false,
             server: None,
             override_list: None,
+            macos: None,
         }
     } else {
         snapshot
